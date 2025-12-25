@@ -575,8 +575,8 @@ uint8_t st7789_set_column_address(st7789_handle_t *handle, uint16_t start_addres
 
         return 1;                                                              /* return error */
     }
-    start_address += 2;
-    end_address += 2;
+    start_address += ST7789_COLUMN_OFFSET;
+    end_address += ST7789_COLUMN_OFFSET;
     buf[0] = (start_address >> 8) & 0xFF;                                      /* start address msb */
     buf[1] = (start_address >> 0) & 0xFF;                                      /* start address lsb */
     buf[2] = (end_address >> 8) & 0xFF;                                        /* end address msb */
@@ -636,8 +636,8 @@ uint8_t st7789_set_row_address(st7789_handle_t *handle, uint16_t start_address, 
 
         return 1;                                                              /* return error */
     }
-    start_address++;
-    end_address++;
+    start_address += ST7789_ROW_OFFSET;
+    end_address += ST7789_ROW_OFFSET;
     buf[0] = (start_address >> 8) & 0xFF;                                      /* start address msb */
     buf[1] = (start_address >> 0) & 0xFF;                                      /* start address lsb */
     buf[2] = (end_address >> 8) & 0xFF;                                        /* end address msb */
@@ -3473,10 +3473,10 @@ uint8_t st7789_clear(st7789_handle_t *handle)
 
         return 1;                                                                  /* return error */
     }
-    buf[0] = (0x02 >> 8) & 0xFF;                                                   /* start address msb */
-    buf[1] = (0x02 >> 0) & 0xFF;                                                   /* start address lsb */
-    buf[2] = ((handle->column + 1) >> 8) & 0xFF;                                   /* end address msb */
-    buf[3] = ((handle->column + 1) >> 0) & 0xFF;                                   /* end address lsb */
+    buf[0] = (ST7789_COLUMN_OFFSET >> 8) & 0xFF;                                                   /* start address msb */
+    buf[1] = (ST7789_COLUMN_OFFSET >> 0) & 0xFF;                                                   /* start address lsb */
+    buf[2] = ((handle->column + ST7789_COLUMN_OFFSET - 1) >> 8) & 0xFF;                                   /* end address msb */
+    buf[3] = ((handle->column + ST7789_COLUMN_OFFSET - 1) >> 0) & 0xFF;                                   /* end address lsb */
     if (a_st7789_write_bytes(handle, buf, 4, ST7789_DATA) != 0)                    /* write data */
     {
         handle->debug_print("st7789: write data failed.\n");                       /* write data failed */
@@ -3490,10 +3490,10 @@ uint8_t st7789_clear(st7789_handle_t *handle)
 
         return 1;                                                                  /* return error */
     }
-    buf[0] = (0x01 >> 8) & 0xFF;                                                   /* start address msb */
-    buf[1] = (0x01 >> 0) & 0xFF;                                                   /* start address lsb */
-    buf[2] = ((handle->row) >> 8) & 0xFF;                                      /* end address msb */
-    buf[3] = ((handle->row) >> 0) & 0xFF;                                      /* end address lsb */
+    buf[0] = (ST7789_ROW_OFFSET >> 8) & 0xFF;                                                   /* start address msb */
+    buf[1] = (ST7789_ROW_OFFSET >> 0) & 0xFF;                                                   /* start address lsb */
+    buf[2] = ((handle->row + ST7789_ROW_OFFSET - 1) >> 8) & 0xFF;                                      /* end address msb */
+    buf[3] = ((handle->row + ST7789_ROW_OFFSET - 1) >> 0) & 0xFF;                                      /* end address lsb */
     if (a_st7789_write_bytes(handle, buf, 4, ST7789_DATA) != 0)                    /* write data */
     {
         handle->debug_print("st7789: write data failed.\n");                       /* write data failed */
@@ -3674,6 +3674,8 @@ uint8_t st7789_fill_rect(st7789_handle_t *handle, uint16_t left, uint16_t top, u
 
         return 1;                                                                  /* return error */
     }
+    left += ST7789_COLUMN_OFFSET;
+    right += ST7789_COLUMN_OFFSET;
     buf[0] = (left >> 8) & 0xFF;                                                   /* start address msb */
     buf[1] = (left >> 0) & 0xFF;                                                   /* start address lsb */
     buf[2] = ((right) >> 8) & 0xFF;                                                /* end address msb */
@@ -3691,6 +3693,8 @@ uint8_t st7789_fill_rect(st7789_handle_t *handle, uint16_t left, uint16_t top, u
 
         return 1;                                                                  /* return error */
     }
+    top += ST7789_ROW_OFFSET;
+    bottom += ST7789_ROW_OFFSET;
     buf[0] = (top >> 8) & 0xFF;                                                    /* start address msb */
     buf[1] = (top >> 0) & 0xFF;                                                    /* start address lsb */
     buf[2] = ((bottom) >> 8) & 0xFF;                                               /* end address msb */
@@ -3898,10 +3902,12 @@ uint8_t st7789_draw_picture_12bits(st7789_handle_t *handle, uint16_t left, uint1
 
         return 1;                                                                  /* return error */
     }
+    left += ST7789_COLUMN_OFFSET;
+    right += ST7789_COLUMN_OFFSET;
     buf[0] = (left >> 8) & 0xFF;                                                   /* start address msb */
     buf[1] = (left >> 0) & 0xFF;                                                   /* start address lsb */
     buf[2] = ((right) >> 8) & 0xFF;                                                /* end address msb */
-    buf[3] = ((right) >> 0) & 0xFF;                                                /* end address lsb */
+    buf[3] = ((right ) >> 0) & 0xFF;                                                /* end address lsb */
     if (a_st7789_write_bytes(handle, buf, 4, ST7789_DATA) != 0)                    /* write data */
     {
         handle->debug_print("st7789: write data failed.\n");                       /* write data failed */
@@ -3915,6 +3921,8 @@ uint8_t st7789_draw_picture_12bits(st7789_handle_t *handle, uint16_t left, uint1
 
         return 1;                                                                  /* return error */
     }
+    top += ST7789_ROW_OFFSET;
+    bottom += ST7789_ROW_OFFSET;
     buf[0] = (top >> 8) & 0xFF;                                                    /* start address msb */
     buf[1] = (top >> 0) & 0xFF;                                                    /* start address lsb */
     buf[2] = ((bottom) >> 8) & 0xFF;                                               /* end address msb */
@@ -4080,8 +4088,8 @@ uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint1
         return 1;                                                                  /* return error */
     }
 
-    left += 2;
-    right += 2;
+    left += ST7789_COLUMN_OFFSET;
+    right += ST7789_COLUMN_OFFSET;
     buf[0] = (left >> 8) & 0xFF;                                                   /* start address msb */
     buf[1] = (left >> 0) & 0xFF;                                                   /* start address lsb */
     buf[2] = ((right) >> 8) & 0xFF;                                                /* end address msb */
@@ -4099,8 +4107,8 @@ uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint1
 
         return 1;                                                                  /* return error */
     }
-    top++;
-    bottom++;
+    top += ST7789_ROW_OFFSET;
+    bottom += ST7789_ROW_OFFSET;
     buf[0] = (top >> 8) & 0xFF;                                                    /* start address msb */
     buf[1] = (top >> 0) & 0xFF;                                                    /* start address lsb */
     buf[2] = ((bottom) >> 8) & 0xFF;                                               /* end address msb */
@@ -4259,6 +4267,8 @@ uint8_t st7789_draw_picture_18bits(st7789_handle_t *handle, uint16_t left, uint1
 
         return 1;                                                                  /* return error */
     }
+    left += ST7789_COLUMN_OFFSET;
+    right += ST7789_COLUMN_OFFSET;
     buf[0] = (left >> 8) & 0xFF;                                                   /* start address msb */
     buf[1] = (left >> 0) & 0xFF;                                                   /* start address lsb */
     buf[2] = ((right) >> 8) & 0xFF;                                                /* end address msb */
@@ -4276,6 +4286,8 @@ uint8_t st7789_draw_picture_18bits(st7789_handle_t *handle, uint16_t left, uint1
 
         return 1;                                                                  /* return error */
     }
+    top += ST7789_ROW_OFFSET;
+    bottom += ST7789_ROW_OFFSET;
     buf[0] = (top >> 8) & 0xFF;                                                    /* start address msb */
     buf[1] = (top >> 0) & 0xFF;                                                    /* start address lsb */
     buf[2] = ((bottom) >> 8) & 0xFF;                                               /* end address msb */
@@ -4368,14 +4380,13 @@ static uint8_t a_st7789_draw_point(st7789_handle_t *handle, uint16_t x, uint16_t
 {
     uint8_t buf[4];
 
-    x+=2;
-    y+=1;
     if (a_st7789_write_byte(handle, ST7789_CMD_CASET, ST7789_CMD) != 0)            /* write set column address command */
     {
         handle->debug_print("st7789: write command failed.\n");                    /* write command failed */
 
         return 1;                                                                  /* return error */
     }
+    x += ST7789_COLUMN_OFFSET;
     buf[0] = (x >> 8) & 0xFF;                                                      /* start address msb */
     buf[1] = (x >> 0) & 0xFF;                                                      /* start address lsb */
     buf[2] = (x >> 8) & 0xFF;                                                      /* end address msb */
@@ -4393,6 +4404,7 @@ static uint8_t a_st7789_draw_point(st7789_handle_t *handle, uint16_t x, uint16_t
 
         return 1;                                                                  /* return error */
     }
+    y += ST7789_ROW_OFFSET;
     buf[0] = (y >> 8) & 0xFF;                                                      /* start address msb */
     buf[1] = (y >> 0) & 0xFF;                                                      /* start address lsb */
     buf[2] = (y >> 8) & 0xFF;                                                      /* end address msb */

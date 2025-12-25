@@ -53,15 +53,15 @@ extern "C"{
 /**
  * @brief st7789 basic example default definition
  */
-#define ST7789_BASIC_DEFAULT_COLUMN                             128                                             /**< 240 */
-#define ST7789_BASIC_DEFAULT_ROW                                128                                             /**< 320 */
+#define ST7789_BASIC_DEFAULT_COLUMN                             240                                          /**< 240 */
+#define ST7789_BASIC_DEFAULT_ROW                                135                                          /**< 320 */
 #define ST7789_BASIC_DEFAULT_GAMMA_CURVE                        ST7789_GAMMA_CURVE_1
-#define ST7789_BASIC_DEFAULT_ACCESS                            (ST7789_ORDER_PAGE_TOP_TO_BOTTOM | \
-                                                                ST7789_ORDER_COLUMN_LEFT_TO_RIGHT | \
-                                                                ST7789_ORDER_PAGE_COLUMN_NORMAL | \
+#define ST7789_BASIC_DEFAULT_ACCESS                             (ST7789_ORDER_PAGE_TOP_TO_BOTTOM | \
+                                                                ST7789_ORDER_COLUMN_RIGHT_TO_LEFT | \
+                                                                ST7789_ORDER_PAGE_COLUMN_REVERSE | \
                                                                 ST7789_ORDER_LINE_TOP_TO_BOTTOM | \
-                                                                ST7789_ORDER_COLOR_BGR | \
-                                                                ST7789_ORDER_REFRESH_LEFT_TO_RIGHT)             /**< access */
+                                                                ST7789_ORDER_COLOR_RGB | \
+                                                                ST7789_ORDER_REFRESH_LEFT_TO_RIGHT)            /**< access */
 #define ST7789_BASIC_DEFAULT_RGB_INTERFACE_COLOR_FORMAT         ST7789_RGB_INTERFACE_COLOR_FORMAT_65K          /**< 262K color format */
 #define ST7789_BASIC_DEFAULT_CONTROL_INTERFACE_COLOR_FORMAT     ST7789_CONTROL_INTERFACE_COLOR_FORMAT_16_BIT    /**< 16bit color format */
 #define ST7789_BASIC_DEFAULT_BRIGHTNESS                         0xFF                                            /**< 0xFF brightness */
@@ -111,7 +111,7 @@ extern "C"{
 #define ST7789_BASIC_DEFAULT_VCOMS                              1.625f                                          /**< 1.625 vcoms */
 #define ST7789_BASIC_DEFAULT_XMY                                ST7789_BOOL_FALSE                               /**< disable xmy */
 #define ST7789_BASIC_DEFAULT_XBGR                               ST7789_BOOL_TRUE                                /**< enable xbgr */
-#define ST7789_BASIC_DEFAULT_XINV                               ST7789_BOOL_FALSE                               /**< disable xinv */
+#define ST7789_BASIC_DEFAULT_XINV                               ST7789_BOOL_TRUE                               /**< disable xinv */
 #define ST7789_BASIC_DEFAULT_XMX                                ST7789_BOOL_TRUE                                /**< enable xmx */
 #define ST7789_BASIC_DEFAULT_XMH                                ST7789_BOOL_TRUE                                /**< enable xmh */
 #define ST7789_BASIC_DEFAULT_XMV                                ST7789_BOOL_FALSE                               /**< disable xmv */

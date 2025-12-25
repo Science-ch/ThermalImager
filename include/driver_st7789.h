@@ -164,6 +164,8 @@ typedef enum
 /**
  * @}
  */
+#define ST7789_COLUMN_OFFSET 40
+#define ST7789_ROW_OFFSET    53
 
 /**
  * @addtogroup st7789_advance_driver

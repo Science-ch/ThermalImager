@@ -47,7 +47,7 @@
 uint8_t st7789_interface_spi_init(void)
 {
     spi_init(SPI_PORT, 60*1000*1000);
-    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    // gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
     gpio_set_function(PIN_CS,   GPIO_FUNC_SIO);
     gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);

@@ -30,9 +30,9 @@ void bilinear_scale(const uint16_t *src, uint16_t *dst, int srcW, int srcH, int 
 int main()
 {
     stdio_init_all();
-    gpio_set_function(14, GPIO_FUNC_PWM);
+    gpio_set_function(9, GPIO_FUNC_PWM);
     uint slice_num = pwm_gpio_to_slice_num(14);
-    pwm_set_clkdiv(slice_num,5.2);
+    pwm_set_clkdiv(slice_num,2.5);
     pwm_set_wrap(slice_num,1);
     pwm_set_chan_level(slice_num, PWM_CHAN_A, 1);
     pwm_set_chan_level(slice_num, PWM_CHAN_B, 1);
@@ -47,6 +47,10 @@ int main()
     // Timer example code - This example fires off the callback after 2000ms
     // add_alarm_in_ms(2000, alarm_callback, NULL, false);
 
+    st7789_basic_init();
+    st7789_basic_clear();
+    st7789_basic_display_on();
+    while(1);
     MLX90640_I2CInit();
     MLX90640_I2CFreqSet(1000*1000);
     

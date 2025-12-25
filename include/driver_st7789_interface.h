@@ -44,13 +44,13 @@ extern "C"{
 #endif
 
 #define SPI_PORT spi0
-#define PIN_MISO 4
-#define PIN_CS   5
-#define PIN_SCK  2
-#define PIN_MOSI 3
-#define RES 0
-#define DC 1
-#define BL 9
+#define PIN_MISO 16
+#define PIN_CS   17
+#define PIN_SCK  18
+#define PIN_MOSI 19
+#define RES 23
+#define DC 16
+#define BL 22
 
 /* 常用 RGB565 颜色定义 (16位: R-5bit, G-6bit, B-5bit) */
 
