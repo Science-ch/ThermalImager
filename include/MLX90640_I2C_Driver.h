@@ -20,9 +20,9 @@
 #include <stdint.h>
 #include "include/MLX90640_API.h"
 
-#define I2C_PORT i2c1
-#define I2C_SDA 6
-#define I2C_SCL 7
+#define I2C_PORT i2c0
+#define I2C_SDA 20
+#define I2C_SCL 21
 
 void MLX90640_I2CInit(void);
 int MLX90640_I2CGeneralReset(void);

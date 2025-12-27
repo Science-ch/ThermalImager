@@ -49,6 +49,7 @@ target_include_directories(ThermalImager PRIVATE
 # Add any user requested libraries
 target_link_libraries(ThermalImager 
         hardware_spi
+        hardware_adc
         hardware_i2c
         hardware_dma
         hardware_pwm

@@ -4592,10 +4592,10 @@ uint8_t st7789_write_string(st7789_handle_t *handle, uint16_t x, uint16_t y, cha
             {
                 a=F4x6[n*3+i];
                 for (int j = 0; j < 8; j++)
-                {			
-                    if(a&0x80)
-                        a_st7789_draw_point(handle, x + j % 4, y + 2 * i + j / 4, color); /* draw point */
-                    a<<=1;
+                {
+                    if (a & 0x01)
+                        a_st7789_draw_point(handle, x + 3 - (j % 4), y + 2 * i + 1 - j / 4, color); /* draw point */
+                    a>>=1;
                 }
                 
             }		
