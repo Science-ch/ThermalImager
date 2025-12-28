@@ -8,19 +8,29 @@
 #include "hardware/dma.h"
 #include "hardware/adc.h"
 #include "hardware/pio.h"
-#include "hardware/interp.h"
 #include "hardware/timer.h"
-#include "hardware/watchdog.h"
 #include "hardware/clocks.h"
 #include "include/driver_st7789_basic.h"
 #include "include/MLX90640_I2C_Driver.h"
 #include "include/color_lut.h"
 
+#include "pico/multicore.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+
+// Which core to run on if configNUMBER_OF_CORES==1
+#ifndef RUN_FREE_RTOS_ON_CORE
+#define RUN_FREE_RTOS_ON_CORE 0
+#endif
+
+#include "pico/async_context_freertos.h"
+
 #define MIN_TEMP 7.0f
 #define MAX_TEMP 40.0f
 #define MID_TEMP ((MIN_TEMP + MAX_TEMP) / 2.0f)
 
-
+paramsMLX90640 params;
 uint16_t frame_buffer[96*72]={0};
 
 void draw_thermal_image(float *temps);
@@ -28,6 +38,54 @@ uint16_t temp_to_iron_color(float temp);
 float normalize_temp(float temp);
 void Temp2RGB(float *temp, int size, float maxTemp, uint16_t *rgb);
 void bilinear_scale(const uint16_t *src, uint16_t *dst, int srcW, int srcH, int dstW, int dstH);
+void main_task(__unused void *pvParameters)
+{
+    time_t start_time,end_time;
+    char str[100];
+    uint16_t frameData[834];
+    float temperatures[768];
+    while (1)
+    {
+        sprintf(str,"battery:%4.2fV",(adc_read() * 2.5f / 4096.0f) * 2.0f);
+        st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
+
+        start_time = time_us_64();
+        MLX90640_TriggerMeasurement(0x33);
+
+        MLX90640_GetFrameData(0x33, frameData);
+        MLX90640_GetFrameData(0x33, frameData);
+        end_time = time_us_64();
+        sprintf(str, "GetFrame:%7ldus", end_time - start_time);
+        st7789_basic_string(130, 12, str, strlen(str), BLACK, ST7789_FONT_12);
+
+        float ambientTemp = MLX90640_GetTa(frameData, &params);
+        float vdd = MLX90640_GetVdd(frameData, &params);
+        
+        start_time = time_us_64();
+        MLX90640_CalculateTo(frameData, &params, 0.95, ambientTemp-8, temperatures);
+        end_time = time_us_64();
+        sprintf(str, "CalTemp:%8ldus", end_time - start_time);
+        st7789_basic_string(130, 24, str, strlen(str), BLACK, ST7789_FONT_12);
+
+        start_time = time_us_64();
+        MLX90640_BadPixelsCorrection(params.brokenPixels, temperatures, 1, &params);
+        MLX90640_BadPixelsCorrection(params.outlierPixels, temperatures, 1, &params);
+        end_time = time_us_64();
+        sprintf(str, "BadPixelFix:%4ldus", end_time - start_time);
+        st7789_basic_string(130, 36, str, strlen(str), BLACK, ST7789_FONT_12);
+
+        start_time = time_us_64();
+        draw_thermal_image(temperatures);
+        end_time = time_us_64();
+        sprintf(str, "DrawImage:%6ldus", end_time - start_time);
+        st7789_basic_string(130, 48, str, strlen(str), BLACK, ST7789_FONT_12);
+
+        sprintf(str, "AmbientTemp:%4.1f", ambientTemp);
+        st7789_basic_string(0, 72, str, strlen(str), ORANGE, ST7789_FONT_12);
+        sprintf(str, "CentreTemp:%5.1f", temperatures[768/2]);
+        st7789_basic_string(0, 84, str, strlen(str), ORANGE, ST7789_FONT_12);
+    }
+}
 
 int main()
 {
@@ -52,16 +110,6 @@ int main()
     pwm_set_chan_level(slice_num, PWM_CHAN_A, 30);
     pwm_set_enabled(slice_num, true);
 
-    interp_config cfg = interp_default_config();
-    // Now use the various interpolator library functions for your use case
-    // e.g. interp_config_clamp(&cfg, true);
-    //      interp_config_shift(&cfg, 2);
-    // Then set the config 
-    interp_set_config(interp0, 0, &cfg);
-
-    // Timer example code - This example fires off the callback after 2000ms
-    // add_alarm_in_ms(2000, alarm_callback, NULL, false);
-
     MLX90640_I2CInit();
     MLX90640_I2CFreqSet(1000*1000);
     
@@ -76,7 +124,7 @@ int main()
         free(eeData);
         return 0;
     }
-    paramsMLX90640 params;
+    
     if(MLX90640_ExtractParameters(eeData, &params) != 0) {
         st7789_basic_string(0,0,"Params Read Error!",19,RED,ST7789_FONT_12);
         free(eeData);
@@ -98,76 +146,15 @@ int main()
             row_start[j] = color;
         }
     }
-    // for (int i = 0; i < 16; i++)
-    // {
-    //     for (int j = 0; j < 128; j++)
-    //     {
-    //         st7789_basic_write_point(j, 100 + i, color_lut2[j + 128 * (i / 8)]);
-    //     }
-        
-        
-    // }
-    
     st7789_basic_draw_picture_16bits(118, 0, 127, 71, frame_buffer);
 
     MLX90640_SetChessMode(0x33);      // 使用棋盘模式
     MLX90640_SetRefreshRate(0x33, 4); // 8Hz刷新率
     MLX90640_SetResolution(0x33, 3);  // 19位分辨率
 
-    // frame_buffer[96 * 1 + 1] = WHITE;
-    // char str[50]="Science_ch";
-    // if(st7789_basic_draw_picture_16bits(0, 0, 95, 71, frame_buffer)!=0)
-    //     sprintf(str, "Return:1");
-    // st7789_basic_string(0,73,str,strlen(str),MAROON,ST7789_FONT_12);
-    // sprintf(str,"%d %d %d %d %d %d %d %d %d %d ",badPixels[0],badPixels[1],badPixels[2],badPixels[3],badPixels[4],
-    // badPixels[5],badPixels[6],badPixels[7],badPixels[8],badPixels[9]);
-    // st7789_basic_string(0,0,str,strlen(str),CYAN,ST7789_FONT_12);
-    time_t start_time,end_time;
-    while(1) 
-    {
-        sprintf(str,"battery:%4.2fV",(adc_read() * 2.5f / 4096.0f) * 2.0f);
-        st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        // start_time = time_us_64();
-        MLX90640_TriggerMeasurement(0x33);
-        
-        uint16_t frameData[834];
-        MLX90640_GetFrameData(0x33, frameData);
-        MLX90640_GetFrameData(0x33, frameData);
-        // end_time = time_us_64();
-        // sprintf(str, "GetFrame:%7ldus", end_time - start_time);
-        // st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        float ambientTemp = MLX90640_GetTa(frameData, &params);
-        float vdd = MLX90640_GetVdd(frameData, &params);
-        
-        float temperatures[768];
-        // start_time = time_us_64();
-        MLX90640_CalculateTo(frameData, &params, 0.95, ambientTemp-8, temperatures);
-        // end_time = time_us_64();
-        // sprintf(str, "CalTemp:%8ldus", end_time - start_time);
-        // st7789_basic_string(130, 12, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        // start_time = time_us_64();
-        MLX90640_BadPixelsCorrection(params.brokenPixels, temperatures, 1, &params);
-        MLX90640_BadPixelsCorrection(params.outlierPixels, temperatures, 1, &params);
-        // end_time = time_us_64();
-        // sprintf(str, "BadPixelFix:%4ldus", end_time - start_time);
-        // st7789_basic_string(130, 24, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        // start_time = time_us_64();
-        draw_thermal_image(temperatures);
-        // end_time = time_us_64();
-        // sprintf(str, "DrawImage:%6ldus", end_time - start_time);
-        // st7789_basic_string(130, 36, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        sprintf(str, "AmbientTemp:%4.1f", ambientTemp);
-        st7789_basic_string(0, 72, str, strlen(str), ORANGE, ST7789_FONT_12);
-        sprintf(str, "CentreTemp:%5.1f", temperatures[768/2]);
-        st7789_basic_string(0, 84, str, strlen(str), ORANGE, ST7789_FONT_12);
-        // sprintf(str, "%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d%3d", (int)temperatures[0], (int)temperatures[2], (int)temperatures[4], (int)temperatures[6], (int)temperatures[8], (int)temperatures[10], (int)temperatures[12], (int)temperatures[14], (int)temperatures[16], (int)temperatures[18], (int)temperatures[20], (int)temperatures[22], (int)temperatures[24], (int)temperatures[26], (int)temperatures[28], (int)temperatures[30]);
-        // st7789_basic_string(0, 135 - 8, str, strlen(str), BLACK, 8);
-    }
+    xTaskCreate(main_task, "mainThread", 1024 * 2, NULL, 1, NULL);
+    vTaskStartScheduler();
+    while(1);
     return 0;
 }
 
@@ -193,71 +180,6 @@ uint16_t temp_to_iron_color(float temp)
 {
     int t = normalize_temp(temp) * 255;
     return color_lut2[t];
-
-    // // 蓝->青->黄->红的渐变
-    // float r, g, b;
-    
-    // if (t < 0.25f) {
-    //     // 深蓝 -> 蓝
-    //     r = 0.0f;
-    //     g = 0.0f;
-    //     b = 0.5f + 0.5f * (t / 0.25f);
-    // } else if (t < 0.5f) {
-    //     // 蓝 -> 青
-    //     r = 0.0f;
-    //     g = (t - 0.25f) / 0.25f;
-    //     b = 1.0f;
-    // } else if (t < 0.75f) {
-    //     // 青 -> 黄
-    //     r = (t - 0.5f) / 0.25f;
-    //     g = 1.0f;
-    //     b = 1.0f - (t - 0.5f) / 0.25f;
-    // } else {
-    //     // 黄 -> 红
-    //     r = 1.0f;
-    //     g = 1.0f - (t - 0.75f) / 0.25f;
-    //     b = 0.0f;
-    // }
-    
-    // // 转换为RGB565
-    // uint8_t r5 = (uint8_t)(r * 31);
-    // uint8_t g6 = (uint8_t)(g * 63);
-    // uint8_t b5 = (uint8_t)(b * 31);
-    
-    // return (r5 << 11) | (g6 << 5) | b5;
-
-
-    // double miniNum = 0.0002;
-	// float L = MAX_TEMP;
-	// float PI = 3.14;
-    // /* 转温度为灰度 */
-    // float grey = normalize_temp(temp) * 255;
-    // /* 计算HSI */
-    // float I = grey,H = (2*PI*grey)/L;
-    // float S;
-    // /* grey < L/2 */
-    // if((grey-L/2) < miniNum){
-    // //if(grey<L/2){
-    //     S = 1.5 * grey;
-    // }else{
-    //     S = 1.5 * (L-grey);
-    // }
-    // /* 计算RGB */
-    // float V1 = S* cos(H);
-    // float V2 = S* sin(H);
-    // float R = I - 0.204*V1 + 0.612*V2;
-    // float G = I - 0.204*V1 - 0.612*V2;
-    // float B = I + 0.408*V1; 
-    // /* 转为16bits RGB[5-6-5]色彩 */
-    // /* 
-    //     (2^5-1)/(2^8-1) = 0.12 
-    //     (2^6-1)/(2^8-1) = 0.24
-    // */		
-    // uint16_t rbits = (R*0.125);
-    // uint16_t gbits = (G*0.250);
-    // uint16_t bbits = (B*0.125);
-    // return (rbits<<11)|(gbits<<5)|bbits;
-
 }
 
 float normalize_temp(float temp) {

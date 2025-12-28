@@ -26,6 +26,15 @@ file(GLOB C_SOURCES "src/*.c")
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+set(FREERTOS_KERNEL_PATH "D:/Libraries/FreeRTOS-KernelV11.2.0" CACHE PATH "FreeRTOS Kernel path")
+
+if (NOT FREERTOS_KERNEL_PATH AND NOT DEFINED ENV{FREERTOS_KERNEL_PATH})
+    message("Skipping FreeRTOS examples as FREERTOS_KERNEL_PATH not defined")
+    return()
+endif()
+
+include(FreeRTOS_Kernel_import.cmake)
+
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(ThermalImager ${C_SOURCES})
@@ -43,7 +52,6 @@ target_link_libraries(ThermalImager
 # Add the standard include files to the build
 target_include_directories(ThermalImager PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}
-  ${CMAKE_CURRENT_LIST_DIR}/.. # for our common lwipopts or any other standard includes, if required
 )
 
 # Add any user requested libraries
@@ -54,10 +62,21 @@ target_link_libraries(ThermalImager
         hardware_dma
         hardware_pwm
         hardware_pio
-        hardware_interp
         hardware_timer
-        hardware_watchdog
         hardware_clocks
+        pico_async_context_freertos
+        FreeRTOS-Kernel-Heap4
         )
 
+# Set the nunber of cores to 1.
+# This defaults to 2 in FreeRTOSConfig_examples_common.h if not defined in here
+target_compile_definitions(ThermalImager PRIVATE
+    configNUMBER_OF_CORES=1
+    )
+if(PICO_CYW43_SUPPORTED)
+    # For led support on pico_w
+    target_link_libraries(ThermalImager PRIVATE
+        pico_cyw43_arch_none
+        )
+endif()
 pico_add_extra_outputs(ThermalImager)
