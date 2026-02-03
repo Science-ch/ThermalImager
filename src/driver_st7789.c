@@ -4595,6 +4595,8 @@ uint8_t st7789_write_string(st7789_handle_t *handle, uint16_t x, uint16_t y, cha
                 {
                     if (a & 0x01)
                         a_st7789_draw_point(handle, x + 3 - (j % 4), y + 2 * i + 1 - j / 4, color); /* draw point */
+                    else
+                        a_st7789_draw_point(handle, x + 3 - (j % 4), y + 2 * i + 1 - j / 4, 0xFFFF); /* draw point */
                     a>>=1;
                 }
                 

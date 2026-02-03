@@ -13,9 +13,7 @@
 #include "include/driver_st7789_basic.h"
 #include "include/MLX90640_I2C_Driver.h"
 #include "include/color_lut.h"
-
 #include "pico/multicore.h"
-
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -25,19 +23,17 @@
 #endif
 
 #include "pico/async_context_freertos.h"
+#include "ThermalImager.h"
 
-#define MIN_TEMP 7.0f
-#define MAX_TEMP 40.0f
-#define MID_TEMP ((MIN_TEMP + MAX_TEMP) / 2.0f)
+float MIN_TEMP = 7.0f, MAX_TEMP = 40.0f, MID_TEMP = (7.0f + 40.0f) / 2.0f;
+
+// #define MIN_TEMP 7.0f
+// #define MAX_TEMP 40.0f
+// #define MID_TEMP ((MIN_TEMP + MAX_TEMP) / 2.0f)
 
 paramsMLX90640 params;
 uint16_t frame_buffer[96*72]={0};
 
-void draw_thermal_image(float *temps);
-uint16_t temp_to_iron_color(float temp);
-float normalize_temp(float temp);
-void Temp2RGB(float *temp, int size, float maxTemp, uint16_t *rgb);
-void bilinear_scale(const uint16_t *src, uint16_t *dst, int srcW, int srcH, int dstW, int dstH);
 void main_task(__unused void *pvParameters)
 {
     time_t start_time,end_time;
@@ -46,6 +42,13 @@ void main_task(__unused void *pvParameters)
     float temperatures[768];
     while (1)
     {
+        sprintf(str, "%5.1f", MIN_TEMP);
+        st7789_basic_string(97, 0, str, strlen(str), BLACK, 8);
+        sprintf(str, "%5.1f", MID_TEMP);
+        st7789_basic_string(97, 32, str, strlen(str), BLACK, 8);
+        sprintf(str, "%5.1f", MAX_TEMP);
+        st7789_basic_string(97, 65, str, strlen(str), BLACK, 8);
+
         sprintf(str,"battery:%4.2fV",(adc_read() * 2.5f / 4096.0f) * 2.0f);
         st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
 
@@ -82,55 +85,37 @@ void main_task(__unused void *pvParameters)
 
         sprintf(str, "AmbientTemp:%4.1f", ambientTemp);
         st7789_basic_string(0, 72, str, strlen(str), ORANGE, ST7789_FONT_12);
-        sprintf(str, "CentreTemp:%5.1f", temperatures[768/2]);
+        sprintf(str, "CentreTemp:%5.1f", temperatures[768 / 2 - 16]);
         st7789_basic_string(0, 84, str, strlen(str), ORANGE, ST7789_FONT_12);
     }
 }
 
 int main()
 {
-    stdio_init_all();
-    gpio_init(24);
-    gpio_set_dir(24, GPIO_IN);
-    adc_init();
-    adc_gpio_init(26);
-    adc_select_input(0);
-    gpio_set_function(9, GPIO_FUNC_PWM);
-    uint slice_num = pwm_gpio_to_slice_num(14);
-    pwm_set_clkdiv(slice_num,2.5);
-    pwm_set_wrap(slice_num,1);
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, 1);
-    pwm_set_chan_level(slice_num, PWM_CHAN_B, 1);
-    pwm_set_enabled(slice_num, true);
-
-    gpio_set_function(BL, GPIO_FUNC_PWM);
-    slice_num = pwm_gpio_to_slice_num(BL);
-    pwm_set_clkdiv(slice_num,125000000/500000);
-    pwm_set_wrap(slice_num,100);
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, 30);
-    pwm_set_enabled(slice_num, true);
+    Initgpios();
+    InitIRQ();
 
     MLX90640_I2CInit();
     MLX90640_I2CFreqSet(1000*1000);
     
-
     st7789_basic_init();
     st7789_basic_clear();
     st7789_basic_display_on();
 
     uint16_t *eeData = (uint16_t *)malloc(832);
     if(MLX90640_DumpEE(0x33, eeData) != 0) {
-        st7789_basic_string(0,0,"EEPROM Read Error!",19,RED,ST7789_FONT_12);
+        st7789_basic_string(0,0,"EEPROM Read Error!",18,RED,ST7789_FONT_12);
         free(eeData);
         return 0;
     }
     
     if(MLX90640_ExtractParameters(eeData, &params) != 0) {
-        st7789_basic_string(0,0,"Params Read Error!",19,RED,ST7789_FONT_12);
+        st7789_basic_string(0,0,"Params Read Error!",18,RED,ST7789_FONT_12);
         free(eeData);
         return 0;
     }
     free(eeData);
+
     st7789_basic_clear();
     char str[100];
     sprintf(str, "%5.1f", MIN_TEMP);
@@ -156,6 +141,105 @@ int main()
     vTaskStartScheduler();
     while(1);
     return 0;
+}
+
+void Initgpios()
+{
+    stdio_init_all();
+    gpio_init(24);//充电指示
+    gpio_set_dir(24, GPIO_IN);
+    gpio_pull_up(24);
+
+    gpio_init(25);//K1
+    gpio_set_dir(25, GPIO_IN);
+    gpio_pull_up(25);
+    gpio_init(27);//K2
+    gpio_set_dir(27, GPIO_IN);
+    gpio_pull_up(27);
+    gpio_init(28);//K3
+    gpio_set_dir(28, GPIO_IN);
+    gpio_pull_up(28);
+    gpio_init(29);//K4
+    gpio_set_dir(29, GPIO_IN);
+    gpio_pull_up(29);
+
+    adc_init();
+    adc_gpio_init(26);//电池电压
+    adc_select_input(0);
+
+    gpio_set_function(9, GPIO_FUNC_PWM);//ov7670  25Mhz时钟
+    uint slice_num = pwm_gpio_to_slice_num(14);
+    pwm_set_clkdiv(slice_num,2.5);
+    pwm_set_wrap(slice_num,1);
+    pwm_set_chan_level(slice_num, PWM_CHAN_A, 1);
+    pwm_set_chan_level(slice_num, PWM_CHAN_B, 1);
+    pwm_set_enabled(slice_num, true);
+
+    gpio_set_function(BL, GPIO_FUNC_PWM);
+    slice_num = pwm_gpio_to_slice_num(BL);
+    pwm_set_clkdiv(slice_num,125000000/500000);
+    pwm_set_wrap(slice_num,100);
+    pwm_set_chan_level(slice_num, PWM_CHAN_A, 100);
+    pwm_set_enabled(slice_num, true);
+}
+
+void InitIRQ()
+{
+    gpio_set_irq_enabled_with_callback(25, GPIO_IRQ_EDGE_FALL, true, &irq_handler);
+    gpio_set_irq_enabled(27, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(28, GPIO_IRQ_EDGE_FALL, true);
+    gpio_set_irq_enabled(29, GPIO_IRQ_EDGE_FALL, true);
+}
+
+void irq_handler(uint gpio, uint32_t events)
+{
+    static absolute_time_t last_time[4] = {0};
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    //K1
+    if (gpio == 25 && (events & GPIO_IRQ_EDGE_FALL))
+    {
+        if (absolute_time_diff_us(last_time[0], get_absolute_time()) > 20000)
+        {
+            last_time[0] = get_absolute_time();
+            MIN_TEMP -= 1.0f;
+            if (MIN_TEMP < -40.0f) MIN_TEMP = -40.0f;
+            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
+        }
+    }
+    //K2
+    if (gpio == 27 && (events & GPIO_IRQ_EDGE_FALL))
+    {
+        if(absolute_time_diff_us(last_time[1], get_absolute_time()) > 20000)
+        {
+            last_time[1] = get_absolute_time();
+            MIN_TEMP += 1.0f;
+            if (MIN_TEMP > 300.0f) MIN_TEMP = 300.0f;
+            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
+        }
+    }
+    //K3
+    if (gpio == 28 && (events & GPIO_IRQ_EDGE_FALL))
+    {
+        if(absolute_time_diff_us(last_time[2], get_absolute_time()) > 20000)
+        {
+            last_time[2] = get_absolute_time();
+            MAX_TEMP -= 1.0f;
+            if (MAX_TEMP < -40.0f) MAX_TEMP = -40.0f;
+            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
+        }
+    }
+    //K4
+    if (gpio == 29 && (events & GPIO_IRQ_EDGE_FALL))
+    {
+        if(absolute_time_diff_us(last_time[3], get_absolute_time()) > 20000)
+        {
+            last_time[3] = get_absolute_time();
+            MAX_TEMP += 1.0f;
+            if (MAX_TEMP > 300.0f) MAX_TEMP = 300.0f;
+            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
+        }
+    }
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
 void draw_thermal_image(float *temps)
