@@ -25,7 +25,7 @@
 #include "pico/async_context_freertos.h"
 #include "ThermalImager.h"
 
-float MIN_TEMP = 7.0f, MAX_TEMP = 40.0f, MID_TEMP = (7.0f + 40.0f) / 2.0f;
+float MIN_TEMP = 14.0f, MAX_TEMP = 30.0f, MID_TEMP = (14.0f + 30.0f) / 2.0f;
 
 // #define MIN_TEMP 7.0f
 // #define MAX_TEMP 40.0f
@@ -49,7 +49,7 @@ void main_task(__unused void *pvParameters)
         sprintf(str, "%5.1f", MAX_TEMP);
         st7789_basic_string(97, 65, str, strlen(str), BLACK, 8);
 
-        sprintf(str,"battery:%4.2fV",(adc_read() * 2.5f / 4096.0f) * 2.0f);
+        sprintf(str, "battery:%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.49f);
         st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
 
         start_time = time_us_64();
@@ -243,30 +243,57 @@ void irq_handler(uint gpio, uint32_t events)
 }
 
 void draw_thermal_image(float *temps)
-{
-    uint16_t color[32 * 24];
-    for (int i = 0; i < 24; i++)
+{  
+    const float scale_x = 32.0f / 96.0f;
+    const float scale_y = 24.0f / 72.0f;
+    
+    for (int y = 0; y < 72; y++)
     {
-        for (int j = 0; j < 32; j++)
+        for (int x = 0; x < 96; x++)
         {
-            float temp = temps[32 * i + j];
-            color[i * 32 + 31 - j] = temp_to_iron_color(temp);
+            float src_x = x * scale_x;
+            float src_y = y * scale_y;
+            
+            int x1 = (int)src_x;
+            int y1 = (int)src_y;
+            
+            // 限制边界
+            if (x1 > 30) x1 = 30;
+            if (y1 > 22) y1 = 22;
+            
+            float dx = src_x - x1;
+            float dy = src_y - y1;
+            
+            // 预计算权重
+            float w11 = (1 - dx) * (1 - dy);
+            float w12 = dx * (1 - dy);
+            float w21 = (1 - dx) * dy;
+            float w22 = dx * dy;
+            
+            // 获取温度值
+            int base_idx = y1 * 32 + x1;
+            float t11 = temps[base_idx];
+            float t12 = temps[base_idx + 1];
+            float t21 = temps[base_idx + 32];
+            float t22 = temps[base_idx + 33];
+            
+            // 计算插值温度
+            float temp = w11 * t11 + w12 * t12 + w21 * t21 + w22 * t22;
+            
+            // 直接存入frame_buffer
+            frame_buffer[y * 96 + (95 - x)] = temp_to_iron_color(temp);
         }
-        
     }
-
-    bilinear_scale(color, frame_buffer, 32, 24, 96, 72);
 
     st7789_basic_draw_picture_16bits(0, 0, 95, 71, frame_buffer);
 }
-
-uint16_t temp_to_iron_color(float temp)
+inline uint16_t temp_to_iron_color(float temp)
 {
     int t = normalize_temp(temp) * 255;
     return color_lut2[t];
 }
 
-float normalize_temp(float temp) {
+inline float normalize_temp(float temp) {
     float min_temp = MIN_TEMP;
     float max_temp = MAX_TEMP;
     if (temp < min_temp) return 0.0f;
