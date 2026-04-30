@@ -20,8 +20,8 @@ endif()
 
 project(ThermalImager C CXX ASM)
 
-include_directories("include")
-file(GLOB C_SOURCES "src/*.c")
+include_directories("include" "camera")
+file(GLOB C_SOURCES "src/*.c" "camera/*.c")
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
@@ -42,12 +42,14 @@ add_executable(ThermalImager ${C_SOURCES})
 pico_set_program_name(ThermalImager "ThermalImager")
 pico_set_program_version(ThermalImager "0.1")
 
-pico_enable_stdio_uart(ThermalImager 1)
-pico_enable_stdio_usb(ThermalImager 0)
+pico_generate_pio_header(ThermalImager ${CMAKE_CURRENT_LIST_DIR}/camera/ov7670.pio OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR}/camera)
 
 # Add the standard library to the build
 target_link_libraries(ThermalImager
         pico_stdlib)
+
+pico_enable_stdio_uart(ThermalImager 0)
+pico_enable_stdio_usb(ThermalImager 1)
 
 # Add the standard include files to the build
 target_include_directories(ThermalImager PRIVATE

@@ -13,6 +13,8 @@
 #include "include/driver_st7789_basic.h"
 #include "include/MLX90640_I2C_Driver.h"
 #include "include/color_lut.h"
+#include "camera/ov7670.h"
+#include "camera/ov7670_sccb.h"
 #include "pico/multicore.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -49,7 +51,7 @@ void main_task(__unused void *pvParameters)
         sprintf(str, "%5.1f", MAX_TEMP);
         st7789_basic_string(97, 65, str, strlen(str), BLACK, 8);
 
-        sprintf(str, "battery:%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.49f);
+        sprintf(str, "battery:%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.13f);
         st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
 
         start_time = time_us_64();
@@ -92,6 +94,12 @@ void main_task(__unused void *pvParameters)
 
 int main()
 {
+    // ov7670_init();
+    // while (1)
+    // {
+        
+    // }
+    
     Initgpios();
     InitIRQ();
 
@@ -101,6 +109,26 @@ int main()
     st7789_basic_init();
     st7789_basic_clear();
     st7789_basic_display_on();
+
+    ov7670_init();
+    
+    
+    PIO pio = pio0;
+    uint sm = 0;
+    
+    char str1[100];
+    uint ch = 0;
+
+    // sprintf(str1, "MID:%x  PID:%x", OV7670_MID, OV7670_PID);
+    // st7789_basic_string(0, 0, str1, strlen(str1), ORANGE, ST7789_FONT_12);
+    // sleep_ms(5000);
+    st7789_basic_clear();
+    while (1)
+    {
+        ov7670_get_single_frame();
+        st7789_basic_draw_picture_16bits(60, 7, 60 + 159, 7 + 119, ov7670_buf+320);
+    }
+    
 
     uint16_t *eeData = (uint16_t *)malloc(832);
     if(MLX90640_DumpEE(0x33, eeData) != 0) {
@@ -167,19 +195,11 @@ void Initgpios()
     adc_gpio_init(26);//电池电压
     adc_select_input(0);
 
-    gpio_set_function(9, GPIO_FUNC_PWM);//ov7670  25Mhz时钟
-    uint slice_num = pwm_gpio_to_slice_num(14);
-    pwm_set_clkdiv(slice_num,2.5);
-    pwm_set_wrap(slice_num,1);
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, 1);
-    pwm_set_chan_level(slice_num, PWM_CHAN_B, 1);
-    pwm_set_enabled(slice_num, true);
-
     gpio_set_function(BL, GPIO_FUNC_PWM);
-    slice_num = pwm_gpio_to_slice_num(BL);
+    uint slice_num = pwm_gpio_to_slice_num(BL);
     pwm_set_clkdiv(slice_num,125000000/500000);
     pwm_set_wrap(slice_num,100);
-    pwm_set_chan_level(slice_num, PWM_CHAN_A, 100);
+    pwm_set_chan_level(slice_num, PWM_CHAN_A, 60);
     pwm_set_enabled(slice_num, true);
 }
 
