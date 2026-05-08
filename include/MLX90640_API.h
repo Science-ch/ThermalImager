@@ -126,5 +126,8 @@ typedef struct
     int MLX90640_SetInterleavedMode(uint8_t slaveAddr);
     int MLX90640_SetChessMode(uint8_t slaveAddr);
     void MLX90640_BadPixelsCorrection(uint16_t *pixels, float *to, int mode, paramsMLX90640 *params);
-    
+
+    void MLX90640_CalculateTo_int(uint16_t *frameData, const paramsMLX90640 *params, float emissivity, float tr, int16_t *result);
+    void MLX90640_BadPixelsCorrection_int(uint16_t *pixels, int16_t *to, int mode, paramsMLX90640 *params);
+
 #endif

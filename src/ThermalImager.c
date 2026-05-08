@@ -1,49 +1,43 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "hardware/pwm.h"
-#include "hardware/i2c.h"
-#include "hardware/dma.h"
-#include "hardware/adc.h"
-#include "hardware/pio.h"
-#include "hardware/timer.h"
-#include "hardware/clocks.h"
-#include "include/driver_st7789_basic.h"
-#include "include/MLX90640_I2C_Driver.h"
-#include "include/color_lut.h"
-#include "camera/ov7670.h"
-#include "camera/ov7670_sccb.h"
-#include "pico/multicore.h"
-#include "FreeRTOS.h"
-#include "task.h"
-
-// Which core to run on if configNUMBER_OF_CORES==1
-#ifndef RUN_FREE_RTOS_ON_CORE
-#define RUN_FREE_RTOS_ON_CORE 0
-#endif
-
-#include "pico/async_context_freertos.h"
 #include "ThermalImager.h"
 
 float MIN_TEMP = 14.0f, MAX_TEMP = 30.0f, MID_TEMP = (14.0f + 30.0f) / 2.0f;
+// 对应的整数版本（放大 100 倍）
+static int16_t MIN_TEMP_INT;
+static int16_t MAX_TEMP_INT;
+static int16_t MID_TEMP_INT;
+static int32_t TEMP_RANGE_INT;      // MAX - MIN
+// 归一化用的预计算参数（Q16.16 定点格式）
+// 用于替代 (temp - MIN) / (MAX - MIN) * 255
+// 等价于 (temp - MIN) * (255 * 65536 / RANGE) >> 16
+static int32_t NORM_SCALE_Q16;      // = 255 * 65536 / TEMP_RANGE_INT
+static int32_t NORM_OFFSET;         // = MIN_TEMP_INT
 
-// #define MIN_TEMP 7.0f
-// #define MAX_TEMP 40.0f
-// #define MID_TEMP ((MIN_TEMP + MAX_TEMP) / 2.0f)
-
+char str[40];
 paramsMLX90640 params;
-uint16_t frame_buffer[96*72]={0};
+uint16_t ThermaFrameBuffer[96 * 72] = {0}, MLX90640FrameData[834];
+SemaphoreHandle_t MLX90640_get_data_mutex,LCD_refresh_mutex;
+static int16_t temps_int[768];
+TaskHandle_t taskhandle_main, taskhandle_mlx;
+
+void mlx90640_get_task(__unused void *pvParameters)
+{
+    while (1)
+    {
+        MLX90640_GetFrameData(0x33, MLX90640FrameData);
+        xTaskNotifyGive(taskhandle_main);
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
+    
+}
+
 
 void main_task(__unused void *pvParameters)
 {
-    time_t start_time,end_time;
-    char str[100];
-    uint16_t frameData[834];
-    float temperatures[768];
+    time_t start_time, end_time, frame_time;
+    int16_t max_temp_int, min_temp_int;
     while (1)
     {
+        frame_time = time_us_64();
         sprintf(str, "%5.1f", MIN_TEMP);
         st7789_basic_string(97, 0, str, strlen(str), BLACK, 8);
         sprintf(str, "%5.1f", MID_TEMP);
@@ -54,80 +48,84 @@ void main_task(__unused void *pvParameters)
         sprintf(str, "battery:%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.13f);
         st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
 
-        start_time = time_us_64();
-        MLX90640_TriggerMeasurement(0x33);
-
-        MLX90640_GetFrameData(0x33, frameData);
-        MLX90640_GetFrameData(0x33, frameData);
-        end_time = time_us_64();
-        sprintf(str, "GetFrame:%7ldus", end_time - start_time);
-        st7789_basic_string(130, 12, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        float ambientTemp = MLX90640_GetTa(frameData, &params);
-        float vdd = MLX90640_GetVdd(frameData, &params);
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        float ambientTemp = MLX90640_GetTa(MLX90640FrameData, &params);
+        float vdd = MLX90640_GetVdd(MLX90640FrameData, &params);
         
         start_time = time_us_64();
-        MLX90640_CalculateTo(frameData, &params, 0.95, ambientTemp-8, temperatures);
+        MLX90640_CalculateTo_int(MLX90640FrameData, &params, 0.95, ambientTemp-8, temps_int);
         end_time = time_us_64();
+        xTaskNotifyGive(taskhandle_mlx);
         sprintf(str, "CalTemp:%8ldus", end_time - start_time);
         st7789_basic_string(130, 24, str, strlen(str), BLACK, ST7789_FONT_12);
 
+        MLX90640_BadPixelsCorrection_int(params.brokenPixels, temps_int, 1, &params);
+        MLX90640_BadPixelsCorrection_int(params.outlierPixels, temps_int, 1, &params);
+
         start_time = time_us_64();
-        MLX90640_BadPixelsCorrection(params.brokenPixels, temperatures, 1, &params);
-        MLX90640_BadPixelsCorrection(params.outlierPixels, temperatures, 1, &params);
+        min_temp_int = 32767; max_temp_int = -32768;
+        for (int i = 0; i < 768; i++)
+        {
+            if (temps_int[i] > max_temp_int)
+                max_temp_int = temps_int[i];
+            if (temps_int[i] < min_temp_int)
+                min_temp_int = temps_int[i];
+        }
         end_time = time_us_64();
-        sprintf(str, "BadPixelFix:%4ldus", end_time - start_time);
+        sprintf(str, "MinMax:%9ldus", end_time - start_time);
         st7789_basic_string(130, 36, str, strlen(str), BLACK, ST7789_FONT_12);
 
         start_time = time_us_64();
-        draw_thermal_image(temperatures);
+        draw_thermal_image_int();
         end_time = time_us_64();
         sprintf(str, "DrawImage:%6ldus", end_time - start_time);
         st7789_basic_string(130, 48, str, strlen(str), BLACK, ST7789_FONT_12);
 
         sprintf(str, "AmbientTemp:%4.1f", ambientTemp);
-        st7789_basic_string(0, 72, str, strlen(str), ORANGE, ST7789_FONT_12);
-        sprintf(str, "CentreTemp:%5.1f", temperatures[768 / 2 - 16]);
+        st7789_basic_string(0, 72, str, strlen(str), GREEN, ST7789_FONT_12);
+        sprintf(str, "CentreTemp:%6.1f", (float)temps_int[768 / 2 - 16] / 100.0f);
         st7789_basic_string(0, 84, str, strlen(str), ORANGE, ST7789_FONT_12);
+        sprintf(str, "MaxTemp:%6.1f", (float)max_temp_int / 100.0f);
+        st7789_basic_string(0, 96, str, strlen(str), RED, ST7789_FONT_12);
+        sprintf(str, "MinTemp:%6.1f", (float)min_temp_int / 100.0f);
+        st7789_basic_string(0, 108, str, strlen(str), BLUE, ST7789_FONT_12);
+
+        end_time = time_us_64();
+        sprintf(str, "Frame:%10ldus", end_time - frame_time);
+        st7789_basic_string(130, 12, str, strlen(str), BLACK, ST7789_FONT_12);
     }
 }
 
 int main()
 {
-    // ov7670_init();
-    // while (1)
-    // {
-        
-    // }
-    
     Initgpios();
-    InitIRQ();
-
-    MLX90640_I2CInit();
-    MLX90640_I2CFreqSet(1000*1000);
+    irq_init();
     
     st7789_basic_init();
     st7789_basic_clear();
     st7789_basic_display_on();
+    
+    MLX90640_I2CInit();
+    MLX90640_I2CFreqSet(1000 * 1000);
 
-    ov7670_init();
+    // ov7670_init();
     
     
-    PIO pio = pio0;
-    uint sm = 0;
+    // PIO pio = pio0;
+    // uint sm = 0;
     
-    char str1[100];
-    uint ch = 0;
+    // char str1[100];
+    // uint ch = 0;
 
-    // sprintf(str1, "MID:%x  PID:%x", OV7670_MID, OV7670_PID);
-    // st7789_basic_string(0, 0, str1, strlen(str1), ORANGE, ST7789_FONT_12);
-    // sleep_ms(5000);
-    st7789_basic_clear();
-    while (1)
-    {
-        ov7670_get_single_frame();
-        st7789_basic_draw_picture_16bits(60, 7, 60 + 159, 7 + 119, ov7670_buf+320);
-    }
+    // // sprintf(str1, "MID:%x  PID:%x", OV7670_MID, OV7670_PID);
+    // // st7789_basic_string(0, 0, str1, strlen(str1), ORANGE, ST7789_FONT_12);
+    // // sleep_ms(5000);
+    // st7789_basic_clear();
+    // while (1)
+    // {
+    //     ov7670_get_single_frame();
+    //     st7789_basic_draw_picture_16bits(60, 7, 60 + 159, 7 + 119, ov7670_buf+320);
+    // }
     
 
     uint16_t *eeData = (uint16_t *)malloc(832);
@@ -145,27 +143,34 @@ int main()
     free(eeData);
 
     st7789_basic_clear();
-    char str[100];
     sprintf(str, "%5.1f", MIN_TEMP);
     st7789_basic_string(97, 0, str, strlen(str), BLACK, 8);
     sprintf(str, "%5.1f", MID_TEMP);
     st7789_basic_string(97, 32, str, strlen(str), BLACK, 8);
     sprintf(str, "%5.1f", MAX_TEMP);
     st7789_basic_string(97, 65, str, strlen(str), BLACK, 8);
+    update_temp_range_params();
     for (int i = 0; i < 72; i++) {
-        uint16_t color = temp_to_iron_color(MIN_TEMP + (MAX_TEMP - MIN_TEMP) * (float)i / 71.0f);
-        uint16_t *row_start = &frame_buffer[10 * i];
+        uint16_t color = temp_to_iron_color_int(MIN_TEMP_INT + (MAX_TEMP_INT - MIN_TEMP_INT) * (float)i / 71.0f);
+        uint16_t *row_start = &ThermaFrameBuffer[10 * i];
         for (int j = 0; j < 10; j++) {
             row_start[j] = color;
         }
     }
-    st7789_basic_draw_picture_16bits(118, 0, 127, 71, frame_buffer);
+    st7789_basic_draw_picture_16bits(118, 0, 127, 71, ThermaFrameBuffer);
 
     MLX90640_SetChessMode(0x33);      // 使用棋盘模式
     MLX90640_SetRefreshRate(0x33, 4); // 8Hz刷新率
     MLX90640_SetResolution(0x33, 3);  // 19位分辨率
 
-    xTaskCreate(main_task, "mainThread", 1024 * 2, NULL, 1, NULL);
+    lcd_dma_mutex = xSemaphoreCreateBinary();
+    MLX90640_get_data_mutex = xSemaphoreCreateMutex();
+    LCD_refresh_mutex = xSemaphoreCreateMutex();
+
+    xTaskCreate(main_task, "mainThread", 1024 * 2, NULL, 1, &taskhandle_main);
+    xTaskCreate(mlx90640_get_task, "ThermaDateGetThread", 512, NULL, 2, &taskhandle_mlx);
+    vTaskCoreAffinitySet(taskhandle_main, 1);
+    vTaskCoreAffinitySet(taskhandle_mlx, 1);
     vTaskStartScheduler();
     while(1);
     return 0;
@@ -203,217 +208,92 @@ void Initgpios()
     pwm_set_enabled(slice_num, true);
 }
 
-void InitIRQ()
+// ========================
+// 当 MIN_TEMP / MAX_TEMP 变化时调用此函数
+// ========================
+void update_temp_range_params(void)
 {
-    gpio_set_irq_enabled_with_callback(25, GPIO_IRQ_EDGE_FALL, true, &irq_handler);
-    gpio_set_irq_enabled(27, GPIO_IRQ_EDGE_FALL, true);
-    gpio_set_irq_enabled(28, GPIO_IRQ_EDGE_FALL, true);
-    gpio_set_irq_enabled(29, GPIO_IRQ_EDGE_FALL, true);
+    // 转为放大 100 倍的整数
+    MIN_TEMP_INT = (int16_t)(MIN_TEMP * 100.0f + 0.5f);
+    MAX_TEMP_INT = (int16_t)(MAX_TEMP * 100.0f + 0.5f);
+    MID_TEMP_INT = (int16_t)(MID_TEMP * 100.0f + 0.5f);
+    TEMP_RANGE_INT = MAX_TEMP_INT - MIN_TEMP_INT;
+
+    // 预计算归一化缩放因子（Q16.16）
+    // scale = 255 / TEMP_RANGE_INT，但用定点数表示
+    // 实际：scale_q16 = (255 << 16) / TEMP_RANGE_INT
+    NORM_SCALE_Q16 = (int32_t)(((int64_t)255 << 16) / TEMP_RANGE_INT);
+    NORM_OFFSET = MIN_TEMP_INT;
 }
 
-void irq_handler(uint gpio, uint32_t events)
+// ========================
+// 完全整数化的归一化 + 查表（热循环内联）
+// temp_int: 放大 100 倍的温度
+// ========================
+inline uint16_t temp_to_iron_color_int(int32_t temp_int)
 {
-    static absolute_time_t last_time[4] = {0};
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    //K1
-    if (gpio == 25 && (events & GPIO_IRQ_EDGE_FALL))
-    {
-        if (absolute_time_diff_us(last_time[0], get_absolute_time()) > 20000)
-        {
-            last_time[0] = get_absolute_time();
-            MIN_TEMP -= 1.0f;
-            if (MIN_TEMP < -40.0f) MIN_TEMP = -40.0f;
-            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
-        }
-    }
-    //K2
-    if (gpio == 27 && (events & GPIO_IRQ_EDGE_FALL))
-    {
-        if(absolute_time_diff_us(last_time[1], get_absolute_time()) > 20000)
-        {
-            last_time[1] = get_absolute_time();
-            MIN_TEMP += 1.0f;
-            if (MIN_TEMP > 300.0f) MIN_TEMP = 300.0f;
-            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
-        }
-    }
-    //K3
-    if (gpio == 28 && (events & GPIO_IRQ_EDGE_FALL))
-    {
-        if(absolute_time_diff_us(last_time[2], get_absolute_time()) > 20000)
-        {
-            last_time[2] = get_absolute_time();
-            MAX_TEMP -= 1.0f;
-            if (MAX_TEMP < -40.0f) MAX_TEMP = -40.0f;
-            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
-        }
-    }
-    //K4
-    if (gpio == 29 && (events & GPIO_IRQ_EDGE_FALL))
-    {
-        if(absolute_time_diff_us(last_time[3], get_absolute_time()) > 20000)
-        {
-            last_time[3] = get_absolute_time();
-            MAX_TEMP += 1.0f;
-            if (MAX_TEMP > 300.0f) MAX_TEMP = 300.0f;
-            MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
-        }
-    }
-    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-}
+    // 1. 裁剪到范围
+    if (temp_int < MIN_TEMP_INT)
+        temp_int = MIN_TEMP_INT;
+    if (temp_int > MAX_TEMP_INT)
+        temp_int = MAX_TEMP_INT;
 
-void draw_thermal_image(float *temps)
-{  
-    const float scale_x = 32.0f / 96.0f;
-    const float scale_y = 24.0f / 72.0f;
-    
-    for (int y = 0; y < 72; y++)
-    {
-        for (int x = 0; x < 96; x++)
-        {
-            float src_x = x * scale_x;
-            float src_y = y * scale_y;
-            
-            int x1 = (int)src_x;
-            int y1 = (int)src_y;
-            
-            // 限制边界
-            if (x1 > 30) x1 = 30;
-            if (y1 > 22) y1 = 22;
-            
-            float dx = src_x - x1;
-            float dy = src_y - y1;
-            
-            // 预计算权重
-            float w11 = (1 - dx) * (1 - dy);
-            float w12 = dx * (1 - dy);
-            float w21 = (1 - dx) * dy;
-            float w22 = dx * dy;
-            
-            // 获取温度值
-            int base_idx = y1 * 32 + x1;
-            float t11 = temps[base_idx];
-            float t12 = temps[base_idx + 1];
-            float t21 = temps[base_idx + 32];
-            float t22 = temps[base_idx + 33];
-            
-            // 计算插值温度
-            float temp = w11 * t11 + w12 * t12 + w21 * t21 + w22 * t22;
-            
-            // 直接存入frame_buffer
-            frame_buffer[y * 96 + (95 - x)] = temp_to_iron_color(temp);
-        }
-    }
+    // 2. 归一化：t = (temp_int - OFFSET) * NORM_SCALE_Q16 >> 16
+    // 这里完全无除法，只有一个乘法和一个移位
+    int32_t t = (int32_t)(((int64_t)(temp_int - NORM_OFFSET) * NORM_SCALE_Q16) >> 16);
 
-    st7789_basic_draw_picture_16bits(0, 0, 95, 71, frame_buffer);
-}
-inline uint16_t temp_to_iron_color(float temp)
-{
-    int t = normalize_temp(temp) * 255;
+    // 3. 查表
     return color_lut2[t];
 }
 
-inline float normalize_temp(float temp) {
-    float min_temp = MIN_TEMP;
-    float max_temp = MAX_TEMP;
-    if (temp < min_temp) return 0.0f;
-    if (temp > max_temp) return 1.0f;
-    return (temp - min_temp) / (max_temp - min_temp);
-}
-
-void Temp2RGB(float* temp,int size,float maxTemp,uint16_t* rgb)
+// ========================
+// 纯整数双线性插值 + 绘制
+// ========================
+void draw_thermal_image_int(void)
 {
-	double miniNum = 0.0002;
-	float L = maxTemp;
-	float PI = 3.14;
-	for(int i=0;i<size;i++){
-		/* 转温度为灰度 */
-		float grey = (temp[i]*255)/300;
-		/* 计算HSI */
-		float I = grey,H = (2*PI*grey)/L;
-		float S;
-		/* grey < L/2 */
-		if((grey-L/2) < miniNum){
-		//if(grey<L/2){
-			S = 1.5 * grey;
-		}else{
-			S = 1.5 * (L-grey);
-		}
-		/* 计算RGB */
-		float V1 = S* cos(H);
-		float V2 = S* sin(H);
-		float R = I - 0.204*V1 + 0.612*V2;
-		float G = I - 0.204*V1 - 0.612*V2;
-		float B = I + 0.408*V1; 
-		/* 转为16bits RGB[5-6-5]色彩 */
-		/* 
-			(2^5-1)/(2^8-1) = 0.12 
-			(2^6-1)/(2^8-1) = 0.24
-		*/		
-		uint16_t rbits = (R*0.125);
-		uint16_t gbits = (G*0.250);
-		uint16_t bbits = (B*0.125);
-		rgb[i] = (rbits<<11)|(gbits<<5)|bbits;
-	}
-	
-}
+    const uint32_t STEP_Y_Q16 = 21845;  // 24/72 = 1/3
+    const uint32_t STEP_X_Q16 = 21845;  // 32/96 = 1/3
 
-void bilinear_scale(const uint16_t *src, uint16_t *dst, int srcW, int srcH, int dstW, int dstH) {
-    float scaleX = (float)(srcW - 1) / (dstW - 1);
-    float scaleY = (float)(srcH - 1) / (dstH - 1);
+    for (int y = 0; y < 72; y++)
+    {
+        uint32_t src_y_q16 = y * STEP_Y_Q16;
+        int y1 = src_y_q16 >> 16;
+        if (y1 > 22) y1 = 22;
+        uint32_t dy_q16 = src_y_q16 & 0xFFFF;
+        uint32_t one_minus_dy = 65536 - dy_q16;
 
-    for (int y = 0; y < dstH; y++) {
-        for (int x = 0; x < dstW; x++) {
-            float srcX = x * scaleX;
-            float srcY = y * scaleY;
+        for (int x = 0; x < 96; x++)
+        {
+            uint32_t src_x_q16 = x * STEP_X_Q16;
+            int x1 = src_x_q16 >> 16;
+            if (x1 > 30) x1 = 30;
+            uint32_t dx_q16 = src_x_q16 & 0xFFFF;
+            uint32_t one_minus_dx = 65536 - dx_q16;
 
-            int x1 = (int)srcX;
-            int y1 = (int)srcY;
-            int x2 = (x1 + 1 >= srcW) ? srcW - 1 : x1 + 1;
-            int y2 = (y1 + 1 >= srcH) ? srcH - 1 : y1 + 1;
+            // 权重，Q16 格式（实际值 * 65536），使用 uint32 防止溢出
+            uint32_t w11 = (one_minus_dx * one_minus_dy) >> 16;
+            uint32_t w12 = (dx_q16      * one_minus_dy) >> 16;
+            uint32_t w21 = (one_minus_dx * dy_q16)      >> 16;
+            uint32_t w22 = (dx_q16      * dy_q16)      >> 16;
 
-            float dx = srcX - x1;
-            float dy = srcY - y1;
+            // 源温度索引
+            int base = y1 * 32 + x1;
+            int16_t t11 = temps_int[base];
+            int16_t t12 = temps_int[base + 1];
+            int16_t t21 = temps_int[base + 32];
+            int16_t t22 = temps_int[base + 33];
 
-            uint16_t Q11 = src[y1 * srcW + x1];
-            uint16_t Q21 = src[y1 * srcW + x2];
-            uint16_t Q12 = src[y2 * srcW + x1];
-            uint16_t Q22 = src[y2 * srcW + x2];
+            int64_t sum = (int64_t)w11 * t11 +
+                          (int64_t)w12 * t12 +
+                          (int64_t)w21 * t21 +
+                          (int64_t)w22 * t22;
 
-            // 提取 RGB565 分量
-            float r1 = (Q11 >> 11) & 0x1F;
-            float g1 = (Q11 >> 5)  & 0x3F;
-            float b1 = Q11         & 0x1F;
+            int32_t temp_int = (int32_t)(sum >> 16);
 
-            float r2 = (Q21 >> 11) & 0x1F;
-            float g2 = (Q21 >> 5)  & 0x3F;
-            float b2 = Q21         & 0x1F;
-
-            float r3 = (Q12 >> 11) & 0x1F;
-            float g3 = (Q12 >> 5)  & 0x3F;
-            float b3 = Q12         & 0x1F;
-
-            float r4 = (Q22 >> 11) & 0x1F;
-            float g4 = (Q22 >> 5)  & 0x3F;
-            float b4 = Q22         & 0x1F;
-
-            // 水平插值（上方）
-            float topR = (1 - dx) * r1 + dx * r2;
-            float topG = (1 - dx) * g1 + dx * g2;
-            float topB = (1 - dx) * b1 + dx * b2;
-
-            // 水平插值（下方）
-            float bottomR = (1 - dx) * r3 + dx * r4;
-            float bottomG = (1 - dx) * g3 + dx * g4;
-            float bottomB = (1 - dx) * b3 + dx * b4;
-
-            // 垂直插值
-            float R = (1 - dy) * topR + dy * bottomR;
-            float G = (1 - dy) * topG + dy * bottomG;
-            float B = (1 - dy) * topB + dy * bottomB;
-
-            // 合并成 RGB565
-            dst[y * dstW + x] = ((uint16_t)(R) << 11) | ((uint16_t)(G) << 5) | (uint16_t)(B);
+            // 查表上色
+            ThermaFrameBuffer[y * 96 + (95 - x)] = temp_to_iron_color_int(temp_int);
         }
     }
+
+    st7789_basic_draw_picture_16bits_dma(0, 0, 95, 71, ThermaFrameBuffer);
 }

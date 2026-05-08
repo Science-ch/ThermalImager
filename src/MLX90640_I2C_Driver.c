@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "include/MLX90640_I2C_Driver.h"    
@@ -61,8 +60,10 @@ int MLX90640_I2CWrite(uint8_t slaveAddr, uint16_t writeAddress, uint16_t data) {
 }
 
 // 设置 I2C 频率
-void MLX90640_I2CFreqSet(int freq) {
-    i2c_init(I2C_PORT, freq);  // 重新初始化 I2C 端口
+int MLX90640_I2CFreqSet(int freq) {
+    int act_freq;
+    act_freq = i2c_init(I2C_PORT, freq); // 重新初始化 I2C 端口
     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
     gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    return act_freq;
 }

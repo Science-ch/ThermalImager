@@ -249,6 +249,20 @@ uint8_t st7789_basic_rect(uint16_t left, uint16_t top, uint16_t right, uint16_t 
 uint8_t st7789_basic_draw_picture_16bits(uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *img);
 
 /**
+ * @brief     basic draw a 16 bits picture using dma
+ * @param[in] left left coordinate x
+ * @param[in] top top coordinate y
+ * @param[in] right right coordinate x
+ * @param[in] bottom bottom coordinate y
+ * @param[in] *img pointer to a image buffer
+ * @return    status code
+ *            - 0 success
+ *            - 1 draw picture 16 bits failed
+ * @note      none
+ */
+uint8_t st7789_basic_draw_picture_16bits_dma(uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *img);
+
+/**
  * @}
  */
 

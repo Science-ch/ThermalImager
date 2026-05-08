@@ -4027,7 +4027,7 @@ uint8_t st7789_draw_picture_12bits(st7789_handle_t *handle, uint16_t left, uint1
  *            - 9 top >= bottom
  * @note      left <= column && right <= column && left < right && top <= row && bottom <= row && top < bottom
  */
-uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *image)
+uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *image, uint8_t using_dma)
 {
     uint8_t buf[4];
     uint32_t i;
@@ -4129,13 +4129,24 @@ uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint1
 
     if ((handle->format & 0x05) == 0x05)                                           /* rgb565 */
     {
+        
         uint16_t r;
         uint16_t c;
         uint16_t color;
 
         c = right - left + 1;                                                      /* column */
         r = bottom - top + 1;                                                      /* row */
-        point = 0;                                                                 /* image point init 0 */
+        if (using_dma)
+        {
+            st7789_set_ram_control(handle, ST7789_RAM_ACCESS_MCU, ST7789_DISPLAY_MODE_MCU, ST7789_FRAME_TYPE_0, ST7789_DATA_MODE_LSB, ST7789_RGB_BUS_WIDTH_18_BIT, ST7789_PIXEL_TYPE_0);
+            a_st7789_write_byte(handle, ST7789_CMD_RAMWR, ST7789_CMD);
+            handle->cmd_data_gpio_write(ST7789_DATA);
+            handle->spi_dma_transfer((void *)image, c * r * 2);
+            st7789_set_ram_control(handle, ST7789_RAM_ACCESS_MCU, ST7789_DISPLAY_MODE_MCU, ST7789_FRAME_TYPE_0, ST7789_DATA_MODE_MSB, ST7789_RGB_BUS_WIDTH_18_BIT, ST7789_PIXEL_TYPE_0);
+            return 0;
+        }
+    
+        point = 0;                                                                  /* image point init 0 */
         m = ((uint32_t)(right - left + 1) * (bottom - top + 1) * 2) /
              ST7789_BUFFER_SIZE;                                                   /* total times */
         n = ((uint32_t)(right - left + 1) * (bottom - top + 1) * 2) %

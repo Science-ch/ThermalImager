@@ -37,6 +37,17 @@
 #include "include/driver_st7789_interface.h"
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
+#include "hardware/dma.h"
+#include "pico/multicore.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "pico/async_context_freertos.h"
+#include "include/irq.h"
+
+SemaphoreHandle_t lcd_dma_mutex;
+static dma_channel_config cfg;
+uint ch = 1;
+
 /**
  * @brief  interface spi bus init
  * @return status code
@@ -53,6 +64,14 @@ uint8_t st7789_interface_spi_init(void)
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
     gpio_set_dir(PIN_CS, GPIO_OUT);
     gpio_put(PIN_CS, 1);
+
+    cfg = dma_channel_get_default_config(ch);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+    channel_config_set_read_increment(&cfg, true);
+    channel_config_set_write_increment(&cfg, false);
+    channel_config_set_dreq(&cfg, DREQ_SPI0_TX);
+    dma_channel_set_irq0_enabled(ch, true);
+
     return 0;
 }
 
@@ -66,6 +85,7 @@ uint8_t st7789_interface_spi_init(void)
 uint8_t st7789_interface_spi_deinit(void)
 {
     spi_deinit(SPI_PORT);
+    vSemaphoreDelete(lcd_dma_mutex);
     return 0;
 }
 
@@ -183,5 +203,31 @@ uint8_t st7789_interface_reset_gpio_deinit(void)
 uint8_t st7789_interface_reset_gpio_write(uint8_t value)
 {
     gpio_put(RES,value);
+    return 0;
+}
+
+/**
+ * @brief     interface write data using dma
+ * @param[in] data data address
+ * @param[in] len data length
+ * @return    status code
+ *            - 0 success
+ *            - 1 gpio write failed
+ * @note      none
+ */
+uint8_t st7789_interface_write_dma(uint8_t *data, uint len)
+{
+    gpio_put(PIN_CS, 0);
+    dma_channel_configure(
+        ch,
+        &cfg,
+        &spi_get_hw(SPI_PORT)->dr, // 写入SPI数据寄存器
+        data,                      // 读取转换后的缓冲
+        len,                       // 传输数量
+        true                       // 立即启动
+    );
+    // dma_channel_wait_for_finish_blocking(ch);
+    xSemaphoreTake(lcd_dma_mutex, portMAX_DELAY);
+    gpio_put(PIN_CS, 1);
     return 0;
 }

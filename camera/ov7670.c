@@ -12,7 +12,7 @@
 
 uint16_t OV7670_MID, OV7670_PID;
 uint16_t ov7670_buf[160 * 122];
-dma_channel_config cfg;
+static dma_channel_config cfg;
 
 void ov7670_init()
 {
@@ -96,7 +96,7 @@ void ov7670_get_single_frame()
 {
     PIO pio = pio0;
     uint sm = 0, ch = 0;
-    uint8_t skip_HSYNC = 9;
+    uint8_t skip_HSYNC = 5;
     while (gpio_get(12));
     while (!gpio_get(12));
     while (skip_HSYNC)

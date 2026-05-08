@@ -16,6 +16,9 @@
  */
 #include <include/MLX90640_I2C_Driver.h>
 #include <include/MLX90640_API.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "pico/async_context_freertos.h"
 #include <math.h>
 
 static void ExtractVDDParameters(uint16_t *eeData, paramsMLX90640 *mlx90640);
@@ -128,9 +131,10 @@ int MLX90640_GetFrameData(uint8_t slaveAddr, uint16_t *frameData)
             return error;
         }    
         //dataReady = statusRegister & 0x0008;
-        dataReady = MLX90640_GET_DATA_READY(statusRegister); 
-    }      
-    
+        dataReady = MLX90640_GET_DATA_READY(statusRegister);
+        vTaskDelay(pdTICKS_TO_MS(5));
+    }
+
     error = MLX90640_I2CWrite(slaveAddr, MLX90640_STATUS_REG, MLX90640_INIT_STATUS_VALUE);
     if(error == -MLX90640_I2C_NACK_ERROR)
     {
@@ -522,6 +526,139 @@ void MLX90640_CalculateTo(uint16_t *frameData, const paramsMLX90640 *params, flo
     }
 }
 
+void MLX90640_CalculateTo_int(uint16_t *frameData, const paramsMLX90640 *params, float emissivity, float tr, int16_t *result)
+{
+    float vdd;
+    float ta;
+    float ta4;
+    float tr4;
+    float taTr;
+    float gain;
+    float irDataCP[2];
+    float irData;
+    float alphaCompensated;
+    uint8_t mode;
+    int8_t ilPattern;
+    int8_t chessPattern;
+    int8_t pattern;
+    int8_t conversionPattern;
+    float Sx;
+    float To;
+    int16_t To_int;
+    float alphaCorrR[4];
+    int8_t range;
+    uint16_t subPage;
+    float ktaScale;
+    float kvScale;
+    float alphaScale;
+    float kta;
+    float kv;
+    
+    subPage = frameData[833];
+    vdd = MLX90640_GetVdd(frameData, params);
+    ta = MLX90640_GetTa(frameData, params);
+    
+    ta4 = (ta + 273.15);
+    ta4 = ta4 * ta4;
+    ta4 = ta4 * ta4;
+    tr4 = (tr + 273.15);
+    tr4 = tr4 * tr4;
+    tr4 = tr4 * tr4;
+    taTr = tr4 - (tr4-ta4)/emissivity;
+    
+    ktaScale = POW2(params->ktaScale);
+    kvScale = POW2(params->kvScale);
+    alphaScale = POW2(params->alphaScale);
+    
+    alphaCorrR[0] = 1 / (1 + params->ksTo[0] * 40);
+    alphaCorrR[1] = 1 ;
+    alphaCorrR[2] = (1 + params->ksTo[1] * params->ct[2]);
+    alphaCorrR[3] = alphaCorrR[2] * (1 + params->ksTo[2] * (params->ct[3] - params->ct[2]));
+    
+//------------------------- Gain calculation -----------------------------------    
+    
+    gain = (float)params->gainEE / (int16_t)frameData[778]; 
+  
+//------------------------- To calculation -------------------------------------    
+    mode = (frameData[832] & MLX90640_CTRL_MEAS_MODE_MASK) >> 5;
+    
+    irDataCP[0] = (int16_t)frameData[776] * gain;
+    irDataCP[1] = (int16_t)frameData[808] * gain;
+    
+    irDataCP[0] = irDataCP[0] - params->cpOffset[0] * (1 + params->cpKta * (ta - 25)) * (1 + params->cpKv * (vdd - 3.3));
+    if( mode ==  params->calibrationModeEE)
+    {
+        irDataCP[1] = irDataCP[1] - params->cpOffset[1] * (1 + params->cpKta * (ta - 25)) * (1 + params->cpKv * (vdd - 3.3));
+    }
+    else
+    {
+      irDataCP[1] = irDataCP[1] - (params->cpOffset[1] + params->ilChessC[0]) * (1 + params->cpKta * (ta - 25)) * (1 + params->cpKv * (vdd - 3.3));
+    }
+
+    for( int pixelNumber = 0; pixelNumber < 768; pixelNumber++)
+    {
+        ilPattern = pixelNumber / 32 - (pixelNumber / 64) * 2; 
+        chessPattern = ilPattern ^ (pixelNumber - (pixelNumber/2)*2); 
+        conversionPattern = ((pixelNumber + 2) / 4 - (pixelNumber + 3) / 4 + (pixelNumber + 1) / 4 - pixelNumber / 4) * (1 - 2 * ilPattern);
+        
+        if(mode == 0)
+        {
+          pattern = ilPattern; 
+        }
+        else 
+        {
+          pattern = chessPattern; 
+        }               
+        
+        if(pattern == frameData[833])
+        {    
+            irData = (int16_t)frameData[pixelNumber] * gain;
+            
+            kta = params->kta[pixelNumber]/ktaScale;
+            kv = params->kv[pixelNumber]/kvScale;
+            irData = irData - params->offset[pixelNumber]*(1 + kta*(ta - 25))*(1 + kv*(vdd - 3.3));
+            
+            if(mode !=  params->calibrationModeEE)
+            {
+              irData = irData + params->ilChessC[2] * (2 * ilPattern - 1) - params->ilChessC[1] * conversionPattern; 
+            }                       
+    
+            irData = irData - params->tgc * irDataCP[subPage];
+            irData = irData / emissivity;
+            
+            alphaCompensated = SCALEALPHA*alphaScale/params->alpha[pixelNumber];
+            alphaCompensated = alphaCompensated*(1 + params->KsTa * (ta - 25));
+                        
+            Sx = alphaCompensated * alphaCompensated * alphaCompensated * (irData + alphaCompensated * taTr);
+            Sx = sqrt(sqrt(Sx)) * params->ksTo[1];            
+            
+            To = sqrt(sqrt(irData/(alphaCompensated * (1 - params->ksTo[1] * 273.15) + Sx) + taTr)) - 273.15;                     
+                    
+            if(To < params->ct[1])
+            {
+                range = 0;
+            }
+            else if(To < params->ct[2])   
+            {
+                range = 1;            
+            }   
+            else if(To < params->ct[3])
+            {
+                range = 2;            
+            }
+            else
+            {
+                range = 3;            
+            }
+
+            To_int = sqrt(sqrt(irData / (alphaCompensated * alphaCorrR[range] * (1 + params->ksTo[range] * (To - params->ct[range]))) + taTr)) * 100.0f;
+            To_int -= 27315;
+
+            result[pixelNumber] = To_int;
+        }
+    }
+}
+
 //------------------------------------------------------------------------------
 
 void MLX90640_GetImage(uint16_t *frameData, const paramsMLX90640 *params, float *result)
@@ -756,6 +893,111 @@ void MLX90640_BadPixelsCorrection(uint16_t *pixels, float *to, int mode, paramsM
         } 
         pix = pix + 1;    
     }    
+}
+
+// 辅助函数：四个 int32_t 的中值（取排序后中间两个的平均）
+static inline int16_t median_of_four(int32_t a, int32_t b, int32_t c, int32_t d)
+{
+    // 简单的冒泡排序（4个元素）
+    int32_t arr[4] = {a, b, c, d};
+    for (int i = 0; i < 3; i++) {
+        for (int j = i + 1; j < 4; j++) {
+            if (arr[i] > arr[j]) {
+                int32_t tmp = arr[i];
+                arr[i] = arr[j];
+                arr[j] = tmp;
+            }
+        }
+    }
+    return (int16_t)((arr[1] + arr[2]) / 2);
+}
+
+void MLX90640_BadPixelsCorrection_int(uint16_t *pixels, int16_t *to, int mode, paramsMLX90640 *params)
+{
+    int32_t ap[4];
+    uint8_t pix = 0;
+    uint8_t line;
+    uint8_t column;
+
+    while (pixels[pix] != 0xFFFF)
+    {
+        line   = pixels[pix] >> 5;
+        column = pixels[pix] & 0x1F;   // 等价于 pixels[pix] - (line << 5)
+
+        if (mode == 1)
+        {
+            if (line == 0)
+            {
+                if (column == 0)
+                    to[pixels[pix]] = to[33];
+                else if (column == 31)
+                    to[pixels[pix]] = to[62];
+                else
+                    to[pixels[pix]] = (to[pixels[pix] + 31] + to[pixels[pix] + 33]) / 2;
+            }
+            else if (line == 23)
+            {
+                if (column == 0)
+                    to[pixels[pix]] = to[705];
+                else if (column == 31)
+                    to[pixels[pix]] = to[734];
+                else
+                    to[pixels[pix]] = (to[pixels[pix] - 33] + to[pixels[pix] - 31]) / 2;
+            }
+            else if (column == 0)
+            {
+                to[pixels[pix]] = (to[pixels[pix] - 31] + to[pixels[pix] + 33]) / 2;
+            }
+            else if (column == 31)
+            {
+                to[pixels[pix]] = (to[pixels[pix] - 33] + to[pixels[pix] + 31]) / 2;
+            }
+            else
+            {
+                // 四个邻居
+                ap[0] = to[pixels[pix] - 33];
+                ap[1] = to[pixels[pix] - 31];
+                ap[2] = to[pixels[pix] + 31];
+                ap[3] = to[pixels[pix] + 33];
+                to[pixels[pix]] = median_of_four(ap[0], ap[1], ap[2], ap[3]);
+            }
+        }
+        else // mode != 1
+        {
+            if (column == 0)
+            {
+                to[pixels[pix]] = to[pixels[pix] + 1];
+            }
+            else if (column == 1 || column == 30)
+            {
+                to[pixels[pix]] = (to[pixels[pix] - 1] + to[pixels[pix] + 1]) / 2;
+            }
+            else if (column == 31)
+            {
+                to[pixels[pix]] = to[pixels[pix] - 1];
+            }
+            else
+            {
+                if (IsPixelBad(pixels[pix] - 2, params) == 0 &&
+                    IsPixelBad(pixels[pix] + 2, params) == 0)
+                {
+                    ap[0] = to[pixels[pix] + 1] - to[pixels[pix] + 2];
+                    ap[1] = to[pixels[pix] - 1] - to[pixels[pix] - 2];
+                    int32_t abs_ap0 = (ap[0] < 0) ? -ap[0] : ap[0];
+                    int32_t abs_ap1 = (ap[1] < 0) ? -ap[1] : ap[1];
+                    if (abs_ap0 > abs_ap1)
+                        to[pixels[pix]] = to[pixels[pix] - 1] + (int16_t)ap[1];
+                    else
+                        to[pixels[pix]] = to[pixels[pix] + 1] + (int16_t)ap[0];
+                }
+                else
+                {
+                    to[pixels[pix]] = (to[pixels[pix] - 1] + to[pixels[pix] + 1]) / 2;
+                }
+            }
+        }
+        pix++;
+    }
 }
 
 //------------------------------------------------------------------------------

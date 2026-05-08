@@ -9,8 +9,6 @@ wait 1 pin 10        ; 等 HSYNC = 1（行开始）
 pixel_loop:
     wait 1 pin 8     ; PCLK ↑
     in pins, 8 [9]
-    ; wait 0 pin 8
-    ; wait 1 pin 8
     in pins, 8
     push block
     wait 0 pin 8
@@ -21,6 +19,5 @@ set x, 19
 jmp y-- pixel_loop
 
 wait 0 pin 10
-    ; jmp pin pixel_loop   ; 用 jmp_pin（HSYNC）
 
 .wrap

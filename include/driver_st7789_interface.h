@@ -196,6 +196,17 @@ uint8_t st7789_interface_reset_gpio_deinit(void);
 uint8_t st7789_interface_reset_gpio_write(uint8_t value);
 
 /**
+ * @brief     interface write data using dma
+ * @param[in] data data address
+ * @param[in] len data length
+ * @return    status code
+ *            - 0 success
+ *            - 1 gpio write failed
+ * @note      none
+ */
+uint8_t st7789_interface_write_dma(uint8_t *data, uint len);
+
+/**
  * @}
  */
 

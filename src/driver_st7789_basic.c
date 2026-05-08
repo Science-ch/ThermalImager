@@ -67,6 +67,7 @@ uint8_t st7789_basic_init(void)
     DRIVER_ST7789_LINK_RESET_GPIO_WRITE(&gs_handle, st7789_interface_reset_gpio_write);
     DRIVER_ST7789_LINK_DELAY_MS(&gs_handle, st7789_interface_delay_ms);
     DRIVER_ST7789_LINK_DEBUG_PRINT(&gs_handle, st7789_interface_debug_print);
+    DRIVER_ST7789_LINK_SPI_DMA(&gs_handle, st7789_interface_write_dma);
 
     /* st7789 init */
     res = st7789_init(&gs_handle);
@@ -781,7 +782,30 @@ uint8_t st7789_basic_rect(uint16_t left, uint16_t top, uint16_t right, uint16_t 
 uint8_t st7789_basic_draw_picture_16bits(uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *img)
 {
     /* draw picture in 16 bits */
-    if (st7789_draw_picture_16bits(&gs_handle, left, top, right, bottom, img) != 0)
+    if (st7789_draw_picture_16bits(&gs_handle, left, top, right, bottom, img, 0) != 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief     basic draw a 16 bits picture using dma
+ * @param[in] left left coordinate x
+ * @param[in] top top coordinate y
+ * @param[in] right right coordinate x
+ * @param[in] bottom bottom coordinate y
+ * @param[in] *img pointer to a image buffer
+ * @return    status code
+ *            - 0 success
+ *            - 1 draw picture 16 bits failed
+ * @note      none
+ */
+uint8_t st7789_basic_draw_picture_16bits_dma(uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *img)
+{
+    /* draw picture in 16 bits */
+    if (st7789_draw_picture_16bits(&gs_handle, left, top, right, bottom, img, 1) != 0)
     {
         return 1;
     }

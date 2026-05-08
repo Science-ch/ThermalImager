@@ -566,6 +566,7 @@ typedef struct st7789_handle_s
     uint8_t (*reset_gpio_init)(void);                            /**< point to a reset_gpio_init function address */
     uint8_t (*reset_gpio_deinit)(void);                          /**< point to a reset_gpio_deinit function address */
     uint8_t (*reset_gpio_write)(uint8_t value);                  /**< point to a reset_gpio_write function address */
+    uint8_t (*spi_dma_transfer)(uint8_t *data, uint len);        /**< point to a spi_dma_transfer function address */
     void (*debug_print)(const char *const fmt, ...);             /**< point to a debug_print function address */
     void (*delay_ms)(uint32_t ms);                               /**< point to a delay_ms function address */
     uint8_t inited;                                              /**< inited flag */
@@ -697,6 +698,14 @@ typedef struct st7789_info_s
  * @note      none
  */
 #define DRIVER_ST7789_LINK_DEBUG_PRINT(HANDLE, FUC)               (HANDLE)->debug_print = FUC
+
+/**
+ * @brief     link spi_dma function
+ * @param[in] HANDLE pointer to an st7789 handle structure
+ * @param[in] FUC pointer to a debug_print function address
+ * @note      none
+ */
+#define DRIVER_ST7789_LINK_SPI_DMA(HANDLE, FUC)               (HANDLE)->spi_dma_transfer = FUC
 
 /**
  * @}
@@ -890,7 +899,7 @@ uint8_t st7789_draw_picture_12bits(st7789_handle_t *handle, uint16_t left, uint1
  *            - 9 top >= bottom
  * @note      left <= column && right <= column && left < right && top <= row && bottom <= row && top < bottom
  */
-uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *image);
+uint8_t st7789_draw_picture_16bits(st7789_handle_t *handle, uint16_t left, uint16_t top, uint16_t right, uint16_t bottom, uint16_t *image, uint8_t using_dma);
 
 /**
  * @brief     draw a picture
