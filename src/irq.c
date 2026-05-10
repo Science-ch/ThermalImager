@@ -13,6 +13,11 @@ void irq_init()
 
 void dma_irq_handler() {
     BaseType_t woken = pdFALSE;
+    if (dma_channel_get_irq0_status(0)) {
+        dma_channel_acknowledge_irq0(0);
+        xSemaphoreGiveFromISR(ov7670_dma_mutex, &woken);
+        portYIELD_FROM_ISR(woken);
+    }
     if (dma_channel_get_irq0_status(1)) {
         dma_channel_acknowledge_irq0(1);
         xSemaphoreGiveFromISR(lcd_dma_mutex, &woken);

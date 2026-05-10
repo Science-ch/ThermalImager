@@ -1,8 +1,10 @@
 .program ov7670
 .wrap_target
 
+; set x, 25
+; set y, 9
 set x, 19
-set y, 7
+set y, 15
 
 wait 1 pin 10        ; 等 HSYNC = 1（行开始）
 

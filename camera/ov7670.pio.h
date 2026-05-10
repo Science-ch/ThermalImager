@@ -19,7 +19,7 @@
 static const uint16_t ov7670_program_instructions[] = {
             //     .wrap_target
     0xe033, //  0: set    x, 19
-    0xe047, //  1: set    y, 7
+    0xe04f, //  1: set    y, 15
     0x20aa, //  2: wait   1 pin, 10
     0x20a8, //  3: wait   1 pin, 8
     0x4908, //  4: in     pins, 8                [9]

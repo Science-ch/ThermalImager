@@ -139,7 +139,8 @@ void ov7670_init_regs() {
 	ov7670_write_reg(0x12, 0x14);//QVGA,RGB输出
  
 	//输出窗口设置
-	ov7670_config_window(184,0,160,130);
+	// ov7670_config_window(220,0,266,177);
+	ov7670_config_window(175,7,320,240);
  
 	ov7670_write_reg(0x0c, 0x00);
 	ov7670_write_reg(0x15, 0x00);//0x00

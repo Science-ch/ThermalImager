@@ -6,12 +6,18 @@
 #include "hardware/dma.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
+#include "pico/multicore.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "pico/async_context_freertos.h"
+#include "include/irq.h"
 #include "ov7670.h"
 #include "ov7670_sccb.h"
 #include "ov7670.pio.h"
 
+SemaphoreHandle_t ov7670_dma_mutex;
 uint16_t OV7670_MID, OV7670_PID;
-uint16_t ov7670_buf[160 * 122];
+uint16_t ov7670_buf[320 * 240];
 static dma_channel_config cfg;
 
 void ov7670_init()
@@ -63,19 +69,19 @@ void ov7670_init()
     pwm_set_enabled(slice_num, true);
 
     // DMA 配置
-    uint ch = 0;
-    cfg = dma_channel_get_default_config(ch);
+    cfg = dma_channel_get_default_config(0);
     channel_config_set_transfer_data_size(&cfg, DMA_SIZE_16);
     channel_config_set_read_increment(&cfg, false);
     channel_config_set_write_increment(&cfg, true);
     channel_config_set_dreq(&cfg, pio_get_dreq(pio, sm, false));
+    dma_channel_set_irq0_enabled(0, true);
 
     dma_channel_configure(
-        ch,
+        0,
         &cfg,
         &ov7670_buf[0],
         &pio->rxf[sm],
-        160 * 122,
+        320 * 210,
         false);
 
     gpio_put(13, 0);
@@ -94,19 +100,18 @@ void ov7670_init()
 
 void ov7670_get_single_frame()
 {
-    PIO pio = pio0;
-    uint sm = 0, ch = 0;
-    uint8_t skip_HSYNC = 5;
+    // uint8_t skip_HSYNC = 3;
     while (gpio_get(12));
     while (!gpio_get(12));
-    while (skip_HSYNC)
-    {
-        while(!gpio_get(10));
-        while(gpio_get(10));
-        skip_HSYNC--;
-    }
+    // while (skip_HSYNC)
+    // {
+    //     while(!gpio_get(10));
+    //     while(gpio_get(10));
+    //     skip_HSYNC--;
+    // }
     
-    dma_channel_set_write_addr(ch, &ov7670_buf[0], true);
-    dma_channel_wait_for_finish_blocking(ch);
+    dma_channel_set_write_addr(0, &ov7670_buf[0], true);
+    // dma_channel_wait_for_finish_blocking(0);
+    // xSemaphoreTake(ov7670_dma_mutex, portMAX_DELAY);
     
 }
