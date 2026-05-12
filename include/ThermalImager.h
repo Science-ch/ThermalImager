@@ -27,12 +27,21 @@
 
 extern float MIN_TEMP, MAX_TEMP, MID_TEMP;
 
+typedef enum {
+    mode_mix,
+    mode_ther,
+    mode_cam
+} Display_mode;
+
+
 void Initgpios();
 void update_temp_range_params(void);
 uint16_t temp_to_iron_color_int(int32_t temp_int);
 void draw_thermal_image_int(void);
 void draw_miximage_int(void);
-void draw_arrow(int16_t max_temp_pos, int16_t min_temp_pos);
+void draw_camimage_int(void);
+void draw_arrow(void);
 uint16_t invert_rgb565(uint16_t color);
+void check_long_press(void);
 
 #endif

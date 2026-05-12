@@ -14,16 +14,16 @@ static int32_t NORM_OFFSET;         // = MIN_TEMP_INT
 
 char str[40];
 paramsMLX90640 params;
+int16_t max_temp_int,min_temp_int,max_temp_pos,min_temp_pos,centre_temp;
 uint16_t ThermaFrameBuffer[187 * 119] = {0}, MLX90640FrameData[834];
-SemaphoreHandle_t MLX90640_get_data_mutex,LCD_refresh_mutex;
+SemaphoreHandle_t MLX90640_get_data_Semaph,OV7670_get_data_Semaph;
 static int16_t temps_int[768];
-TaskHandle_t taskhandle_main, taskhandle_mlx, taskhandle_ov7670;
+TaskHandle_t taskhandle_main, taskhandle_mlx, taskhandle_ov7670, taskhandle_button;
+Display_mode cur_mode;
 
 void ov7670_get_task(__unused void *pvParameters)
 {
     // time_t start_time, end_time;
-    int index;
-    int16_t max_temp_int, min_temp_int, max_temp_pos, min_temp_pos;
     while (1)
     {
         // start_time = time_us_64();
@@ -31,64 +31,55 @@ void ov7670_get_task(__unused void *pvParameters)
         // end_time = time_us_64();
         // sprintf(str, "%6ldus", end_time - start_time);
         // st7789_basic_string(0, 120, str, strlen(str), BLACK, ST7789_FONT_12);
-        
+        xSemaphoreGive(OV7670_get_data_Semaph);
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        // float ambientTemp = MLX90640_GetTa(MLX90640FrameData, &params);
-        float ambientTemp = 20.0f;
-        float vdd = MLX90640_GetVdd(MLX90640FrameData, &params);
-        
-        MLX90640_CalculateTo_int(MLX90640FrameData, &params, 0.95, ambientTemp-8, temps_int);
-        xTaskNotifyGive(taskhandle_mlx);
-        min_temp_int = 32767; max_temp_int = -32768;
-        for (int i = 0; i < 768; i++)
-        {
-            if (temps_int[i] > max_temp_int)
-            {
-                max_temp_int = temps_int[i];
-                max_temp_pos = i;
-            }
-            if (temps_int[i] < min_temp_int)
-            {
-                min_temp_int = temps_int[i];
-                min_temp_pos = i;
-            }
-        }
-        // start_time = time_us_64();
-        xSemaphoreTake(ov7670_dma_mutex, portMAX_DELAY);
-        draw_miximage_int();
-        draw_arrow(max_temp_pos, min_temp_pos);
-        st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
-        // end_time = time_us_64();
-        // st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
-        // sprintf(str, "%10ldus", end_time - start_time);
-        // st7789_basic_string(80, 120, str, strlen(str), BLACK, ST7789_FONT_12);
-        sprintf(str, "%5.1f", MIN_TEMP);
-        st7789_basic_string(188, 0, str, strlen(str), BLACK, 8);
-        sprintf(str, "%5.1f", MID_TEMP);
-        st7789_basic_string(188, 55, str, strlen(str), BLACK, 8);
-        sprintf(str, "%5.1f", MAX_TEMP);
-        st7789_basic_string(188, 112, str, strlen(str), BLACK, 8);
-        sprintf(str, "Cnt:%6.1f", (float)temps_int[768 / 2 - 16] / 100.0f);
-        st7789_basic_string(0, 120, str, strlen(str), ORANGE, ST7789_FONT_12);
-        sprintf(str, "Max:%6.1f", (float)max_temp_int / 100.0f);
-        st7789_basic_string(64, 120, str, strlen(str), RED, ST7789_FONT_12);
-        sprintf(str, "Min:%6.1f", (float)min_temp_int / 100.0f);
-        st7789_basic_string(128, 120, str, strlen(str), BLUE, ST7789_FONT_12);
-        sprintf(str, "%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.08f);
-        st7789_basic_string(209, 120, str, strlen(str), BLACK, ST7789_FONT_12);
-        // sprintf(str, "Amb:%4.1f", ambientTemp);
-        // st7789_basic_string(192, 120, str, strlen(str), GREEN, ST7789_FONT_12);
     }
 }
 
 void mlx90640_get_task(__unused void *pvParameters)
 {
+    int16_t _max_temp_int,_min_temp_int,_max_temp_pos,_min_temp_pos;
     while (1)
     {
-        MLX90640_GetFrameData(0x33, MLX90640FrameData);
-        // xTaskNotifyGive(taskhandle_main);
-        xTaskNotifyGive(taskhandle_ov7670);
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        switch(cur_mode)
+        {
+            case mode_cam:
+                MLX90640_GetFrameData(0x33, MLX90640FrameData);
+                float ambientTemp = 20.0f;
+                float vdd = MLX90640_GetVdd(MLX90640FrameData, &params);
+                
+                MLX90640_CalculateTo_int(MLX90640FrameData, &params, 0.95, ambientTemp-8, temps_int);
+                
+                MLX90640_BadPixelsCorrection_int(params.brokenPixels, temps_int, 1, &params);
+                MLX90640_BadPixelsCorrection_int(params.outlierPixels, temps_int, 1, &params);
+                _min_temp_int = 32767; _max_temp_int = -32768;
+                for (int i = 0; i < 768; i++)
+                {
+                    if (temps_int[i] > _max_temp_int)
+                    {
+                        _max_temp_int = temps_int[i];
+                        _max_temp_pos = i;
+                    }
+                    if (temps_int[i] < _min_temp_int)
+                    {
+                        _min_temp_int = temps_int[i];
+                        _min_temp_pos = i;
+                    }
+                }
+                max_temp_int=_max_temp_int;
+                min_temp_int=_min_temp_int;
+                max_temp_pos=_max_temp_pos;
+                min_temp_pos=_min_temp_pos;
+                centre_temp=temps_int[768 / 2 - 16];
+                break;
+            default:
+                MLX90640_GetFrameData(0x33, MLX90640FrameData);
+                // xTaskNotifyGive(taskhandle_main);
+                // xTaskNotifyGive(taskhandle_ov7670);
+                xSemaphoreGive(MLX90640_get_data_Semaph);
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                break;
+        }
     }
     
 }
@@ -97,71 +88,138 @@ void mlx90640_get_task(__unused void *pvParameters)
 void main_task(__unused void *pvParameters)
 {
     time_t start_time, end_time, frame_time;
-    int16_t max_temp_int, min_temp_int;
+    float ambientTemp, vdd;
     while (1)
     {
-        frame_time = time_us_64();
-        xSemaphoreTake(LCD_refresh_mutex, portMAX_DELAY);
-        sprintf(str, "%5.1f", MIN_TEMP);
-        st7789_basic_string(188, 0, str, strlen(str), BLACK, 8);
-        sprintf(str, "%5.1f", MID_TEMP);
-        st7789_basic_string(188, 55, str, strlen(str), BLACK, 8);
-        sprintf(str, "%5.1f", MAX_TEMP);
-        st7789_basic_string(188, 112, str, strlen(str), BLACK, 8);
-        xSemaphoreGive(LCD_refresh_mutex);
-
-        // sprintf(str, "battery:%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.13f);
-        // st7789_basic_string(130, 0, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        float ambientTemp = MLX90640_GetTa(MLX90640FrameData, &params);
-        float vdd = MLX90640_GetVdd(MLX90640FrameData, &params);
-        
-        // start_time = time_us_64();
-        MLX90640_CalculateTo_int(MLX90640FrameData, &params, 0.95, ambientTemp-8, temps_int);
-        // end_time = time_us_64();
-        xTaskNotifyGive(taskhandle_mlx);
-        // sprintf(str, "CalTemp:%8ldus", end_time - start_time);
-        // st7789_basic_string(130, 24, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        MLX90640_BadPixelsCorrection_int(params.brokenPixels, temps_int, 1, &params);
-        MLX90640_BadPixelsCorrection_int(params.outlierPixels, temps_int, 1, &params);
-
-        // start_time = time_us_64();
-        min_temp_int = 32767; max_temp_int = -32768;
-        for (int i = 0; i < 768; i++)
+        switch(cur_mode)
         {
-            if (temps_int[i] > max_temp_int)
-                max_temp_int = temps_int[i];
-            if (temps_int[i] < min_temp_int)
-                min_temp_int = temps_int[i];
+            case mode_mix:
+                xSemaphoreTake(MLX90640_get_data_Semaph, portMAX_DELAY);
+                // ambientTemp = MLX90640_GetTa(MLX90640FrameData, &params);
+                ambientTemp = 20.0f;
+                vdd = MLX90640_GetVdd(MLX90640FrameData, &params);
+                
+                MLX90640_CalculateTo_int(MLX90640FrameData, &params, 0.95, ambientTemp-8, temps_int);
+                xTaskNotifyGive(taskhandle_mlx);
+                MLX90640_BadPixelsCorrection_int(params.brokenPixels, temps_int, 1, &params);
+                MLX90640_BadPixelsCorrection_int(params.outlierPixels, temps_int, 1, &params);
+                min_temp_int = 32767; max_temp_int = -32768;
+                for (int i = 0; i < 768; i++)
+                {
+                    if (temps_int[i] > max_temp_int)
+                    {
+                        max_temp_int = temps_int[i];
+                        max_temp_pos = i;
+                    }
+                    if (temps_int[i] < min_temp_int)
+                    {
+                        min_temp_int = temps_int[i];
+                        min_temp_pos = i;
+                    }
+                }
+                // start_time = time_us_64();
+                xSemaphoreTake(OV7670_get_data_Semaph, portMAX_DELAY);
+                draw_miximage_int();
+                xTaskNotifyGive(taskhandle_ov7670);
+                draw_arrow();
+                st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
+                // end_time = time_us_64();
+                // st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
+                // sprintf(str, "%10ldus", end_time - start_time);
+                // st7789_basic_string(80, 120, str, strlen(str), BLACK, ST7789_FONT_12);
+                sprintf(str, "%5.1f", MIN_TEMP);
+                st7789_basic_string(188, 0, str, strlen(str), BLACK, 8);
+                sprintf(str, "%5.1f", MID_TEMP);
+                st7789_basic_string(188, 55, str, strlen(str), BLACK, 8);
+                sprintf(str, "%5.1f", MAX_TEMP);
+                st7789_basic_string(188, 112, str, strlen(str), BLACK, 8);
+                sprintf(str, "Cnt:%6.1f", (float)temps_int[768 / 2 - 16] / 100.0f);
+                st7789_basic_string(0, 120, str, strlen(str), ORANGE, ST7789_FONT_12);
+                sprintf(str, "Max:%6.1f", (float)max_temp_int / 100.0f);
+                st7789_basic_string(64, 120, str, strlen(str), RED, ST7789_FONT_12);
+                sprintf(str, "Min:%6.1f", (float)min_temp_int / 100.0f);
+                st7789_basic_string(128, 120, str, strlen(str), BLUE, ST7789_FONT_12);
+                sprintf(str, "%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.08f);
+                st7789_basic_string(209, 120, str, strlen(str), BLACK, ST7789_FONT_12);
+                // sprintf(str, "Amb:%4.1f", ambientTemp);
+                // st7789_basic_string(192, 120, str, strlen(str), GREEN, ST7789_FONT_12);
+                break;
+            case mode_ther:
+                xSemaphoreTake(MLX90640_get_data_Semaph, portMAX_DELAY);
+                // float ambientTemp = MLX90640_GetTa(MLX90640FrameData, &params);
+                ambientTemp = 20.0f;
+                vdd = MLX90640_GetVdd(MLX90640FrameData, &params);
+                
+                MLX90640_CalculateTo_int(MLX90640FrameData, &params, 0.95, ambientTemp-8, temps_int);
+                xTaskNotifyGive(taskhandle_mlx);
+                MLX90640_BadPixelsCorrection_int(params.brokenPixels, temps_int, 1, &params);
+                MLX90640_BadPixelsCorrection_int(params.outlierPixels, temps_int, 1, &params);
+                min_temp_int = 32767; max_temp_int = -32768;
+                for (int i = 0; i < 768; i++)
+                {
+                    if (temps_int[i] > max_temp_int)
+                    {
+                        max_temp_int = temps_int[i];
+                        max_temp_pos = i;
+                    }
+                    if (temps_int[i] < min_temp_int)
+                    {
+                        min_temp_int = temps_int[i];
+                        min_temp_pos = i;
+                    }
+                }
+                draw_thermal_image_int();
+                draw_arrow();
+                st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
+                sprintf(str, "%5.1f", MIN_TEMP);
+                st7789_basic_string(188, 0, str, strlen(str), BLACK, 8);
+                sprintf(str, "%5.1f", MID_TEMP);
+                st7789_basic_string(188, 55, str, strlen(str), BLACK, 8);
+                sprintf(str, "%5.1f", MAX_TEMP);
+                st7789_basic_string(188, 112, str, strlen(str), BLACK, 8);
+                sprintf(str, "Cnt:%6.1f", (float)temps_int[768 / 2 - 16] / 100.0f);
+                st7789_basic_string(0, 120, str, strlen(str), ORANGE, ST7789_FONT_12);
+                sprintf(str, "Max:%6.1f", (float)max_temp_int / 100.0f);
+                st7789_basic_string(64, 120, str, strlen(str), RED, ST7789_FONT_12);
+                sprintf(str, "Min:%6.1f", (float)min_temp_int / 100.0f);
+                st7789_basic_string(128, 120, str, strlen(str), BLUE, ST7789_FONT_12);
+                sprintf(str, "%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.08f);
+                st7789_basic_string(209, 120, str, strlen(str), BLACK, ST7789_FONT_12);
+                break;
+            case mode_cam:
+                xTaskNotifyGive(taskhandle_mlx);
+                xSemaphoreTake(OV7670_get_data_Semaph, portMAX_DELAY);
+                draw_camimage_int();
+                xTaskNotifyGive(taskhandle_ov7670);
+                draw_arrow();
+                st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
+                sprintf(str, "%5.1f", MIN_TEMP);
+                st7789_basic_string(188, 0, str, strlen(str), BLACK, 8);
+                sprintf(str, "%5.1f", MID_TEMP);
+                st7789_basic_string(188, 55, str, strlen(str), BLACK, 8);
+                sprintf(str, "%5.1f", MAX_TEMP);
+                st7789_basic_string(188, 112, str, strlen(str), BLACK, 8);
+                sprintf(str, "Cnt:%6.1f", (float)centre_temp / 100.0f);
+                st7789_basic_string(0, 120, str, strlen(str), ORANGE, ST7789_FONT_12);
+                sprintf(str, "Max:%6.1f", (float)max_temp_int / 100.0f);
+                st7789_basic_string(64, 120, str, strlen(str), RED, ST7789_FONT_12);
+                sprintf(str, "Min:%6.1f", (float)min_temp_int / 100.0f);
+                st7789_basic_string(128, 120, str, strlen(str), BLUE, ST7789_FONT_12);
+                sprintf(str, "%4.2fV", (adc_read() * 2.5f / 4096.0f) * 2.0f - 0.08f);
+                st7789_basic_string(209, 120, str, strlen(str), BLACK, ST7789_FONT_12);
+                break;
         }
-        // end_time = time_us_64();
-        // sprintf(str, "MinMax:%9ldus", end_time - start_time);
-        // st7789_basic_string(130, 36, str, strlen(str), BLACK, ST7789_FONT_12);
+        
+    }
+}
 
-        start_time = time_us_64();
-        draw_thermal_image_int();
-        end_time = time_us_64();
-        // sprintf(str, "DrawImage:%6ldus", end_time - start_time);
-        // st7789_basic_string(130, 48, str, strlen(str), BLACK, ST7789_FONT_12);
-        sprintf(str, "%6ldus", end_time - start_time);
-        st7789_basic_string(0, 120, str, strlen(str), BLACK, ST7789_FONT_12);
-
-        // sprintf(str, "AmbientTemp:%4.1f", ambientTemp);
-        // st7789_basic_string(0, 72, str, strlen(str), GREEN, ST7789_FONT_12);
-        // sprintf(str, "CentreTemp:%6.1f", (float)temps_int[768 / 2 - 16] / 100.0f);
-        // st7789_basic_string(0, 84, str, strlen(str), ORANGE, ST7789_FONT_12);
-        // sprintf(str, "MaxTemp:%6.1f", (float)max_temp_int / 100.0f);
-        // st7789_basic_string(0, 96, str, strlen(str), RED, ST7789_FONT_12);
-        // sprintf(str, "MinTemp:%6.1f", (float)min_temp_int / 100.0f);
-        // st7789_basic_string(0, 108, str, strlen(str), BLUE, ST7789_FONT_12);
-
-        end_time = time_us_64();
-        // sprintf(str, "Frame:%10ldus", end_time - frame_time);
-        // st7789_basic_string(160, 12, str, strlen(str), BLACK, ST7789_FONT_12);
-        sprintf(str, "Frame:%10ldus", end_time - frame_time);
-        st7789_basic_string(72, 120, str, strlen(str), BLACK, ST7789_FONT_12);
+void button_task(__unused void *pvParameters)
+{
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    while(1)
+    {
+        check_long_press();
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(20));
     }
 }
 
@@ -234,15 +292,17 @@ int main()
 
     lcd_dma_mutex = xSemaphoreCreateBinary();
     ov7670_dma_mutex = xSemaphoreCreateBinary();
-    MLX90640_get_data_mutex = xSemaphoreCreateMutex();
-    LCD_refresh_mutex = xSemaphoreCreateMutex();
+    MLX90640_get_data_Semaph = xSemaphoreCreateBinary();
+    OV7670_get_data_Semaph=xSemaphoreCreateBinary();
 
 
-    // xTaskCreate(main_task, "mainThread", 1024 * 2, NULL, 1, &taskhandle_main);
+    xTaskCreate(main_task, "mainThread", 512, NULL, 1, &taskhandle_main);
     xTaskCreate(mlx90640_get_task, "ThermaDateGetThread", 512, NULL, 2, &taskhandle_mlx);
     xTaskCreate(ov7670_get_task, "OV7670DateGetThread", 512, NULL, 2, &taskhandle_ov7670);
-    // vTaskCoreAffinitySet(taskhandle_main, 1);
+    xTaskCreate(button_task, "ButtonThread", 256, NULL, 3, &taskhandle_button);
+    vTaskCoreAffinitySet(taskhandle_main, 1);
     vTaskCoreAffinitySet(taskhandle_mlx, 1);
+    vTaskCoreAffinitySet(taskhandle_button, 1);
     vTaskCoreAffinitySet(taskhandle_ov7670, 2);
     vTaskStartScheduler();
     while(1);
@@ -360,8 +420,6 @@ void draw_thermal_image_int(void)
             ThermaFrameBuffer[y * 187 + (186 - x)] = temp_to_iron_color_int(temp_int);
         }
     }
-
-    st7789_basic_draw_picture_16bits_dma(0, 0, 186, 118, ThermaFrameBuffer);
 }
 
 void draw_miximage_int(void)
@@ -434,7 +492,22 @@ void draw_miximage_int(void)
     }
 }
 
-void draw_arrow(int16_t max_temp_pos, int16_t min_temp_pos)
+void draw_camimage_int(void)
+{
+    for (int y = 0; y < 119; y++)
+    {
+        // 源 y 坐标 (Q16)
+        int dy = (y * 112189 >> 16) * 320 + 320 * 3;
+        for (int x = 0; x < 187; x++)
+        {
+            // 源 x 坐标 (Q16)
+            int index = dy + (x * 112398 >> 16);
+            ThermaFrameBuffer[y * 187 + x] = ov7670_buf[index];
+        }
+    }
+}
+
+void draw_arrow(void)
 {
     int16_t max_x, max_y, min_x, min_y;
     max_x = (uint16_t)(31 - max_temp_pos % 32) * 1497 >> 8;
@@ -494,4 +567,37 @@ inline uint16_t invert_rgb565(uint16_t color) {
     b = 0x1F - b;   // 反蓝
 
     return (r << 11) | (g << 5) | b;
+}
+
+void check_long_press(void)
+{
+    absolute_time_t now = get_absolute_time();
+
+    for (int i = 0; i < 4; i++) {
+        if (buttons[i].pressed && !buttons[i].long_press_triggered) {
+            int64_t elapsed = absolute_time_diff_us(buttons[i].press_time, now);
+            if (elapsed >= LONG_PRESS_THRESHOLD_US) {
+                buttons[i].long_press_triggered = true;  // 保证只触发一次
+
+                // 根据按钮索引执行长按操作
+                switch (BUTTON_GPIOS[i]) {
+                    case 25: // K1 长按
+                        cur_mode = mode_mix;
+                        break;
+                    case 27: // K2 长按
+                        cur_mode = mode_ther;
+                        break;
+                    case 28: // K3 长按
+                        cur_mode = mode_cam;
+                        break;
+                    case 29: // K4 长按
+                        MIN_TEMP = (float)min_temp_int / 100.0f; 
+                        MAX_TEMP = (float)max_temp_int / 100.0f;
+                        MID_TEMP = (MIN_TEMP + MAX_TEMP) / 2.0f;
+                        update_temp_range_params();
+                        break;
+                }
+            }
+        }
+    }
 }
